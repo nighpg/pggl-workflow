@@ -1,0 +1,3 @@
+GRCh38#0#chr20
+GRCh38#0#chrX
+GRCh38#0#chrY
