@@ -1,0 +1,16 @@
+{
+  "cram": {"class": "File", "path": "../toy_in.cram"},
+  "gbz": {"class": "File", "path": "../toy.giraffe.gbz"},
+  "dist": {"class": "File", "path": "../toy.dist"},
+  "min": {"class": "File", "path": "../toy.shortread.withzip.min"},
+  "zipcodes": {"class": "File", "path": "../toy.shortread.zipcodes"},
+  "ref_paths": {"class": "File", "path": "../mygraph.ref_paths.txt"},
+  "ref": {"class": "File", "path": "../ref.fa"},
+  "ref_path_prefix": "GRCh38#0#",
+  "autosome_interval": {"class": "File", "path": "../autosome.bed"},
+  "PAR_interval": {"class": "File", "path": "../PAR.bed"},
+  "chrX_interval": {"class": "File", "path": "../chrX.bed"},
+  "chrY_interval": {"class": "File", "path": "../chrY.bed"},
+  "prefix": "TOYCRAM",
+  "threads": 8
+}

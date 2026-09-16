@@ -1,0 +1,104 @@
+# Self-contained CPU pangenome environment for the germline workflow
+#
+# DeepVariant 1.10.0 (CPU) + samtools/bcftools + vg + node + cwltool +
+# the pangenome CWL workflow tree, so any host with singularity/apptainer
+# can run the pipeline with NO setup (no PATH/.local installs, no cwltool).
+#
+# Reference data (JaSaPaGe graph + indexes + linear ref, ~54 GB) is NOT
+# bundled; bind-mount it or pass host paths at runtime (see run-pangenome.sh).
+#
+# Build on a HOST (singularity is not available inside a container):
+#
+#   cd /home/tago/hackathon
+#   singularity build deepvariant-opencode-cpu-vg.sif sif-build.def
+#
+# Usage on any host (no configuration):
+#
+#   singularity exec deepvariant-opencode-cpu-vg.sif \
+#     /opt/pangenome/run-pangenome.sh \
+#     --cram $PWD/sample.cram \
+#     --gbz $PWD/JaSaPaGe.gbz --dist $PWD/jasa.dist \
+#     --min $PWD/jasa.min --zipcodes $PWD/jasa.zipcodes \
+#     --ref_paths $PWD/jasa.ref_paths.txt \
+#     --ref $PWD/jasa.chm13.fa --ref_path_prefix CHM13v2#0# \
+#     --autosome_interval /opt/pangenome/interval_files/chm13_t2t/autosome.bed \
+#     --PAR_interval      /opt/pangenome/interval_files/chm13_t2t/PAR.bed \
+#     --chrX_interval     /opt/pangenome/interval_files/chm13_t2t/chrX.bed \
+#     --chrY_interval     /opt/pangenome/interval_files/chm13_t2t/chrY.bed \
+#     --prefix SAMPLE --outdir out/
+#
+# The CRAM is decoded back to FASTQ (with ref) and re-mapped onto the pangenome
+# with vg giraffe, exactly like a FASTQ lane, so the graph + giraffe indexes are
+# always required.
+#
+Bootstrap: localimage
+From: image/deepvariant-opencode-cpu.sif
+
+%files
+    sif-stage/vg /usr/local/bin/vg
+    sif-stage/node /usr/local/node-v20.18.0-linux-x64
+    sif-stage/wheels /opt/cwltool-wheels
+    Workflows /opt/pangenome/Workflows
+    Tools /opt/pangenome/Tools
+    scripts /opt/pangenome/scripts
+    interval_files /opt/pangenome/interval_files
+
+%post
+    set -eux
+
+    # --- staged tool binaries must be present ---
+    test -s /usr/local/bin/vg
+    test -s /usr/local/node-v20.18.0-linux-x64/bin/node
+    test -n "$(ls /opt/cwltool-wheels)"
+
+    # node v20.18.0 on PATH (via /usr/local/bin)
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/node /usr/local/bin/node
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/npm /usr/local/bin/npm
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/npx /usr/local/bin/npx
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/corepack /usr/local/bin/corepack
+    node --version
+
+    # cwltool, offline from the staged wheels (image python 3.10, no venv/PEP668)
+    python3 -m pip install --no-index --find-links /opt/cwltool-wheels \
+        cwltool==3.2.20260720092025
+
+    # workflow tree present (relative ../Tools, ../scripts must resolve)
+    test -f /opt/pangenome/Workflows/germline-pangenome-cpu.cwl
+    test -f /opt/pangenome/Tools/samtools-to-markdup-bam.cwl
+    test -f /opt/pangenome/scripts/samtools-to-markdup-bam.sh
+    test -f /opt/pangenome/interval_files/chm13_t2t/autosome.bed
+
+    # launcher: runs the bundled workflow with native tools, no container layer
+    cat > /opt/pangenome/run-pangenome.sh <<'LAUNCHER'
+#!/bin/bash
+set -euo pipefail
+exec cwltool --no-container /opt/pangenome/Workflows/germline-pangenome-cpu.cwl "$@"
+LAUNCHER
+    chmod +x /opt/pangenome/run-pangenome.sh
+
+    # drop staged wheels (kept cwltool installed above)
+    rm -rf /opt/cwltool-wheels
+
+    # sanity: every CLI must resolve
+    command -v vg cwltool node run_deepvariant samtools bcftools
+    vg version
+    cwltool --version
+    node --version
+    /opt/pangenome/run-pangenome.sh --help >/dev/null 2>&1 || true
+
+%environment
+    export PATH=/usr/local/bin:/opt/deepvariant/bin:/opt/conda/envs/bio/bin:$PATH
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+    export TF_USE_LEGACY_KERAS=1
+
+%runscript
+    exec "$@"
+
+%test
+    command -v vg cwltool node run_deepvariant samtools bcftools
+    vg version
+    cwltool --version
+    cwltool --validate --no-container \
+        /opt/pangenome/Workflows/germline-pangenome-cpu.cwl
+    test -x /opt/pangenome/run-pangenome.sh
