@@ -1,0 +1,28 @@
+{
+  "fq1": [
+    {"class": "File", "path": "../L1_R1.fastq"},
+    {"class": "File", "path": "../L2_R1.fastq"}
+  ],
+  "fq2": [
+    {"class": "File", "path": "../L1_R2.fastq"},
+    {"class": "File", "path": "../L2_R2.fastq"}
+  ],
+  "rg": [
+    "@RG\\tID:L1\\tPL:ILLUMINA\\tSM:TOY",
+    "@RG\\tID:L2\\tPL:ILLUMINA\\tSM:TOY"
+  ],
+  "gbz": {"class": "File", "path": "../toy.giraffe.gbz"},
+  "dist": {"class": "File", "path": "../toy.dist"},
+  "min": {"class": "File", "path": "../toy.shortread.withzip.min"},
+  "zipcodes": {"class": "File", "path": "../toy.shortread.zipcodes"},
+  "ref_paths": {"class": "File", "path": "../mygraph.ref_paths.txt"},
+  "ref": {"class": "File", "path": "../ref.fa"},
+  "ref_path_prefix": "GRCh38#0#",
+  "autosome_interval": {"class": "File", "path": "../autosome.bed"},
+  "PAR_interval": {"class": "File", "path": "../PAR.bed"},
+  "chrX_interval": {"class": "File", "path": "../chrX.bed"},
+  "chrY_interval": {"class": "File", "path": "../chrY.bed"},
+  "prefix": "TOY",
+  "threads": 8,
+  "emit_gam": true
+}
