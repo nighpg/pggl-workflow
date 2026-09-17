@@ -166,14 +166,20 @@ cwltool --no-container --outdir out/ Workflows/germline-pangenome-gpu.cwl \
   --PAR_interval interval_files/PAR.bed \
   --chrX_interval interval_files/chrX.bed \
   --chrY_interval interval_files/chrY.bed \
-  --prefix SAMPLE --threads 32
+  --prefix SAMPLE --threads 64 --gpu_count 2
 ```
 
-Set `threads` according to how many GPUs you can devote to the run: it feeds both
-`vg giraffe`/`samtools` (CPU threads) and DeepVariant's `num_shards`, and on GPU a
-shard = one TensorFlow GPU session, so `threads` should equal the number of GPUs
-you will use (e.g. `--threads 2` for a two-GPU box), not the CPU core count. CUDA
-must be visible to the container (`NVIDIA_VISIBLE_DEVICES` / `--nv`).
+CPU usage and GPU usage are configured **independently**:
+
+- `--threads N` — CPU threads for `vg giraffe` and the samtools steps (use the
+  CPU core count of the run node, e.g. `--threads 64`).
+- `--gpu_count N` — number of DeepVariant shards run on the GPU (a shard = one
+  TensorFlow GPU session), i.e. the number of GPUs the caller devotes to the run
+  (`--gpu_count 2` on a two-GPU box; default 1).
+
+CUDA must be visible to the container (`NVIDIA_VISIBLE_DEVICES` / `--nv`); if you
+want to restrict which GPUs are used, pin them via `NVIDIA_VISIBLE_DEVICES`
+(e.g. `=0,1`), matching `--gpu_count`.
 
 ## Self-contained SIF (no-setup on any host)
 
@@ -183,7 +189,8 @@ Reference data (the ~54 GB JaSaPaGe graph + indexes + linear ref) is **not**
 bundled; bind-mount it or pass host paths at runtime.
 
 ```bash
-cd /home/tago/hackathon
+cd /home/tago/biohack/pggl-workflow
+./scripts/stage-sif-assets.sh                       # stage sif-stage/ + image/ build assets
 singularity build deepvariant-opencode-cpu-vg.sif sif-build.def      # on a host
 
 # on any other host, zero setup:
@@ -198,10 +205,15 @@ singularity exec deepvariant-opencode-cpu-vg.sif \
 ```
 
 Build notes: singularity is required on the build host (not installable inside
-the base image). Python is 3.10 with no venv and no PEP 668 marker, so cwltool
-is installed system-wide from the wheels staged in `sif-stage/` (offline). The
-final image's `%environment` already sets `PATH` and the image's
-`/opt/deepvariant/bin/run_deepvariant` needs `TF_USE_LEGACY_KERAS=1`.
+the base image). Before building, run `./scripts/stage-sif-assets.sh` once:
+it creates `sif-stage/` (vg, node, cwltool wheels) and `image/` (the CPU base
+SIF for the `localimage` bootstrap + the opencode tarball) by copying from the
+working repo, falling back to the original downloads (docker / nodejs.org /
+`pip download`) when that is unavailable. Python is 3.10 with no venv and no
+PEP 668 marker, so cwltool is installed system-wide from the wheels staged in
+`sif-stage/` (offline). The final image's `%environment` already sets `PATH` and
+the image's `/opt/deepvariant/bin/run_deepvariant` needs `TF_USE_LEGACY_KERAS=1`.
+`tools/filter_fastq.py` is bundled at `/opt/pangenome/tools/` in both images.
 
 ### GPU SIF
 
@@ -213,6 +225,9 @@ installed exactly as in the CPU image, so only the five DeepVariant steps use
 the GPU.
 
 ```bash
+# Run the same staging first (build assets are shared with the CPU SIF):
+./scripts/stage-sif-assets.sh
+
 # Build on a host that can pull the docker image and has the GPU toolchain:
 singularity build deepvariant-opencode-gpu-vg.sif sif-build-gpu.def
 

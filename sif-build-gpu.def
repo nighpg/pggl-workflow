@@ -11,7 +11,8 @@
 # Build on a HOST that can pull the docker image (needs singularity/apptainer
 # with --fakeroot or docker):
 #
-#   cd /home/tago/hackathon
+#   cd /home/tago/biohack/pggl-workflow
+#   ./scripts/stage-sif-assets.sh   # stage sif-stage/ + image/ build assets
 #   singularity build deepvariant-opencode-gpu-vg.sif sif-build-gpu.def
 #
 # Usage on any host:
@@ -39,6 +40,7 @@ From: google/deepvariant:1.10.0-gpu
     Workflows /opt/pangenome/Workflows
     Tools /opt/pangenome/Tools
     scripts /opt/pangenome/scripts
+    tools /opt/pangenome/tools
     interval_files /opt/pangenome/interval_files
     image/opencode-linux-x64-baseline.tar.gz /opt/opencode.tar.gz
 
@@ -61,6 +63,7 @@ From: google/deepvariant:1.10.0-gpu
 
     # GPU DeepVariant present (nvidia libs / opt/... CUDA)
     test -x /opt/deepvariant/bin/run_deepvariant
+    test -f /opt/pangenome/tools/filter_fastq.py
 
     # opencode: offline from the baseline tarball (the official curl installer
     # downloads a build that needs glibc >= 2.34; the DeepVariant image is
@@ -103,6 +106,7 @@ LAUNCHER
     cwltool --validate --no-container \
         /opt/pangenome/Workflows/germline-pangenome-gpu.cwl
     test -x /opt/pangenome/run-pangenome-gpu.sh
+    test -f /opt/pangenome/tools/filter_fastq.py
 
     opencode --version
 

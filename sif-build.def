@@ -9,7 +9,8 @@
 #
 # Build on a HOST (singularity is not available inside a container):
 #
-#   cd /home/tago/hackathon
+#   cd /home/tago/biohack/pggl-workflow
+#   ./scripts/stage-sif-assets.sh   # stage sif-stage/ + image/ build assets
 #   singularity build deepvariant-opencode-cpu-vg.sif sif-build.def
 #
 # Usage on any host (no configuration):
@@ -41,6 +42,7 @@ From: image/deepvariant-opencode-cpu.sif
     Workflows /opt/pangenome/Workflows
     Tools /opt/pangenome/Tools
     scripts /opt/pangenome/scripts
+    tools /opt/pangenome/tools
     interval_files /opt/pangenome/interval_files
 
 %post
@@ -67,6 +69,7 @@ From: image/deepvariant-opencode-cpu.sif
     test -f /opt/pangenome/Tools/samtools-to-markdup-bam.cwl
     test -f /opt/pangenome/scripts/samtools-to-markdup-bam.sh
     test -f /opt/pangenome/interval_files/chm13_t2t/autosome.bed
+    test -f /opt/pangenome/tools/filter_fastq.py
 
     # launcher: runs the bundled workflow with native tools, no container layer
     cat > /opt/pangenome/run-pangenome.sh <<'LAUNCHER'
@@ -102,3 +105,4 @@ LAUNCHER
     cwltool --validate --no-container \
         /opt/pangenome/Workflows/germline-pangenome-cpu.cwl
     test -x /opt/pangenome/run-pangenome.sh
+    test -f /opt/pangenome/tools/filter_fastq.py
