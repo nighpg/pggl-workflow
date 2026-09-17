@@ -1,6 +1,7 @@
 #!/usr/bin/env cwl-runner
 # GPU variant: identical to germline-pangenome-cpu.cwl except the five
-# DeepVariant steps run on the GPU (google/deepvariant:1.10.0-gpu, --use_gpu).
+# DeepVariant steps run on the GPU (google/deepvariant:1.10.0-gpu; GPU use is
+# auto-detected from CUDA visibility).
 # vg giraffe + samtools stay on CPU. Requires a CUDA driver (e.g. V100S) on the
 # host and the container started with GPU passthrough:
 #   singularity exec --nv deepvariant-opencode-cpu-vg-gpu.sif \

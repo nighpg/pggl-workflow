@@ -13,7 +13,7 @@ unchanged.
 | File | Aligner | Variant caller | Notes |
 | --- | --- | --- | --- |
 | `Workflows/germline-pangenome-cpu.cwl` | `vg giraffe` (one job per read group, CWL scatter) | DeepVariant (`google/deepvariant:1.10.0`) | Portable; runs without containers when tools are on `$PATH` |
-| `Workflows/germline-pangenome-gpu.cwl` | `vg giraffe` (CPU, same as above) | DeepVariant GPU (`google/deepvariant:1.10.0-gpu`, `--use_gpu`) | Identical inputs/outputs to the CPU workflow; the five DeepVariant steps run on the GPU. Requires a CUDA driver on the host and a container started with GPU passthrough (`singularity exec --nv ...`) |
+| `Workflows/germline-pangenome-gpu.cwl` | `vg giraffe` (CPU, same as above) | DeepVariant GPU (`google/deepvariant:1.10.0-gpu`) | Identical inputs/outputs to the CPU workflow; the five DeepVariant steps run on the GPU (auto-detected when CUDA is visible). Requires a CUDA driver on the host and a container started with GPU passthrough (`singularity exec --nv ...`) |
 
 Every input lane is mapped with `vg giraffe` onto the pangenome. Two ways to
 supply reads (can be combined, lanes are concatenated):
