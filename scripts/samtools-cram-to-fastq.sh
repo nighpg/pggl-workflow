@@ -43,7 +43,7 @@ RG=$(samtools view -H "$CRAM" 2>/dev/null | awk '/^@RG/{print; exit}')
 [ -n "$RG" ] || RG=$(printf '@RG\tID:%s\tPL:ILLUMINA\tSM:%s' "$PREFIX" "$PREFIX")
 
 # decode + pair recovery; orphans/singletons are not represented in FASTQ
-samtools collate -u -O -@ "$THREADS" "$CRAM" 2>/dev/null |
+samtools collate -u -O -@ "$THREADS" --reference "$REF" "$CRAM" 2>/dev/null |
   samtools fastq --reference "$REF" -@ "$THREADS" \
     -1 "${PREFIX}.cram2fq.R1.fastq" \
     -2 "${PREFIX}.cram2fq.R2.fastq" \

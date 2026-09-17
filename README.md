@@ -42,17 +42,20 @@ The pangenome graph + `giraffe` indexes (`gbz`, `dist`, `min`, `zipcodes`,
 | `autosome_interval`, `PAR_interval`, `chrX_interval`, `chrY_interval` | `File` | Interval BEDs (from `interval_files/`) |
 | `prefix` | `string` | Output prefix |
 | `threads` | `int` | CPU threads (default 32) |
+| `emit_gam` | `boolean` | Keep the per-lane graph-space alignments (`<prefix>.<lane>.gam`) as workflow outputs (default `false`). Adds one GAM write per lane; the BAM is always produced from the same one-pass via `vg surject` |
+| `keep_bam` | `boolean` | Materialise the final duplicate-marked `<prefix>.bam` (+`.bai`) in the output directory (default `true`). Set `false` to skip it; the BAM is still built internally because DeepVariant requires it |
 
 ## Outputs
 
 ```
-<prefix>.bam                      (+ .bai)   duplicate-marked BAM, reference (GRCh38/T2T) coords
+<prefix>.bam                      (+ .bai)   duplicate-marked BAM, reference (GRCh38/T2T) coords (only when keep_bam=true)
 <prefix>.markdup.metrics                      (BQSR replacement)
 <prefix>.autosome.g.vcf.gz       (+ .tbi)  diploid
 <prefix>.PAR.g.vcf.gz            (+ .tbi)  diploid
 <prefix>.chrX_female.g.vcf.gz    (+ .tbi)  diploid
 <prefix>.chrX_male.g.vcf.gz      (+ .tbi)  haploid (--haploid-contigs chrX)
 <prefix>.chrY.g.vcf.gz           (+ .tbi)  haploid (--haploid-contigs chrY)
+<prefix>.<lane>.gam                           per-lane graph-space alignment (only when emit_gam=true)
 ```
 
 ## Preparing a graph
@@ -263,6 +266,19 @@ gVCFs (`autosome`, `PAR`, `chrX_female`, `chrX_male`, `chrY`, +`.tbi`). The two
 job files cover the FASTQ and CRAM tracks; swap the workflow path for
 `Workflows/germline-pangenome-gpu.cwl` to smoke-test the GPU variant on the same
 toy inputs.
+
+Two job files demonstrate the retention options (identical gVCFs in all three
+cases):
+
+```bash
+# keep the per-lane GAM in addition to the BAM -> L1.gam, L2.gam
+cwltool --no-container --outdir tests/toy/demo_out/emit_gam \
+  Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/toy_emit_gam_job.json
+
+# drop the final BAM from the outputs (still built internally for DeepVariant)
+cwltool --no-container --outdir tests/toy/demo_out/no_bam \
+  Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/toy_keep_bam_job.json
+```
 
 ## Release notes
 
