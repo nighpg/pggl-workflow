@@ -89,6 +89,16 @@ inputs:
     doc: Number of threads for vg giraffe, samtools and DeepVariant shards
     default: 32
 
+  emit_gam:
+    type: boolean
+    doc: Keep the per-lane graph-space alignments (lane.gam) as workflow outputs. Adds a GAM write per lane; off by default.
+    default: false
+
+  keep_bam:
+    type: boolean
+    doc: Keep the final duplicate-marked BAM (prefix.bam / .bai) as a workflow output. The BAM is always produced internally because DeepVariant requires BAM; set false to avoid materialising it in the output directory (e.g. to save disk).
+    default: true
+
 steps:
   lane_from_rg:
     run: ../Tools/lane-from-rg.cwl
@@ -138,10 +148,19 @@ steps:
       fq1: combine_lanes/fq1
       fq2: combine_lanes/fq2
       lane: lane_from_rg/lane_names
+      emit_gam: emit_gam
     scatter: [fq1, fq2, read_group, lane]
     scatterMethod: dotproduct
     out:
       - bam
+      - gam
+
+  pick_gam:
+    run: ../Tools/pick-gam.cwl
+    in:
+      gam_in: giraffe/gam
+    out:
+      - gam
 
   postprocess_lane:
     run: ../Tools/samtools-postprocess-lane.cwl
@@ -167,6 +186,14 @@ steps:
     out:
       - bam
       - markdup_metrics
+
+  keep_bam_gate:
+    run: ../Tools/keep-bam.cwl
+    in:
+      bam_in: to_markdup_bam/bam
+      keep: keep_bam
+    out:
+      - bam
 
   deepvariant_autosome:
     run: ../Tools/deepvariant.cwl
@@ -239,11 +266,16 @@ steps:
 
 outputs:
   bam:
-    type: File
-    doc: BAM duplicate-marked, in reference coordinates
-    outputSource: to_markdup_bam/bam
+    type: File?
+    doc: BAM duplicate-marked, in reference coordinates (materialised when keep_bam is true)
+    outputSource: keep_bam_gate/bam
     secondaryFiles:
       - .bai
+
+  gam:
+    type: File[]?
+    doc: Per-lane graph-space alignment in GAM format (kept when emit_gam is true)
+    outputSource: pick_gam/gam
 
   markdup_metrics:
     type: File
