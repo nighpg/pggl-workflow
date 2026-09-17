@@ -13,6 +13,7 @@ unchanged.
 | File | Aligner | Variant caller | Notes |
 | --- | --- | --- | --- |
 | `Workflows/germline-pangenome-cpu.cwl` | `vg giraffe` (one job per read group, CWL scatter) | DeepVariant (`google/deepvariant:1.10.0`) | Portable; runs without containers when tools are on `$PATH` |
+| `Workflows/germline-pangenome-gpu.cwl` | `vg giraffe` (CPU, same as above) | DeepVariant GPU (`google/deepvariant:1.10.0-gpu`, `--use_gpu`) | Identical inputs/outputs to the CPU workflow; the five DeepVariant steps run on the GPU. Requires a CUDA driver on the host and a container started with GPU passthrough (`singularity exec --nv ...`) |
 
 Every input lane is mapped with `vg giraffe` onto the pangenome. Two ways to
 supply reads (can be combined, lanes are concatenated):
@@ -145,6 +146,32 @@ The container images (used when Docker is available) are:
 `google/deepvariant:1.10.0`,
 `quay.io/biocontainers/samtools:1.21--h96c455f_1`.
 
+The GPU workflow additionally uses `google/deepvariant:1.10.0-gpu` for the
+five variant-calling steps (`vg giraffe` and `samtools` stay on CPU).
+
+### GPU track
+
+```bash
+cwltool --validate --no-container Workflows/germline-pangenome-gpu.cwl
+
+cwltool --no-container --outdir out/ Workflows/germline-pangenome-gpu.cwl \
+  --fq1 R1_L1.fastq --fq2 R2_L1.fastq \
+  --rg "@RG\\tID:L1\\tPL:ILLUMINA\\tSM:SAMPLE" \
+  --gbz graph.gbz --dist graph.dist --min graph.min --zipcodes graph.zipcodes \
+  --ref_paths graph.ref_paths.txt --ref Homo_sapiens_assembly38.fasta \
+  --autosome_interval interval_files/autosome.bed \
+  --PAR_interval interval_files/PAR.bed \
+  --chrX_interval interval_files/chrX.bed \
+  --chrY_interval interval_files/chrY.bed \
+  --prefix SAMPLE --threads 32
+```
+
+Set `threads` according to how many GPUs you can devote to the run: it feeds both
+`vg giraffe`/`samtools` (CPU threads) and DeepVariant's `num_shards`, and on GPU a
+shard = one TensorFlow GPU session, so `threads` should equal the number of GPUs
+you will use (e.g. `--threads 2` for a two-GPU box), not the CPU core count. CUDA
+must be visible to the container (`NVIDIA_VISIBLE_DEVICES` / `--nv`).
+
 ## Self-contained SIF (no-setup on any host)
 
 `./sif-build.def` produces a single image containing DeepVariant, samtools/bcftools,
@@ -173,31 +200,55 @@ is installed system-wide from the wheels staged in `sif-stage/` (offline). The
 final image's `%environment` already sets `PATH` and the image's
 `/opt/deepvariant/bin/run_deepvariant` needs `TF_USE_LEGACY_KERAS=1`.
 
+### GPU SIF
+
+`./sif-build-gpu.def` is the GPU equivalent, based on
+`google/deepvariant:1.10.0-gpu` (Ubuntu 20.04 + CUDA). It adds the GPU workflow
+(`/opt/pangenome/Workflows/germline-pangenome-gpu.cwl`) and a
+`/opt/pangenome/run-pangenome-gpu.sh` launcher; vg, samtools and cwltool are
+installed exactly as in the CPU image, so only the five DeepVariant steps use
+the GPU.
+
+```bash
+# Build on a host that can pull the docker image and has the GPU toolchain:
+singularity build deepvariant-opencode-gpu-vg.sif sif-build-gpu.def
+
+# Run with GPU passthrough (--nv binds nvidia devices/driver to the container):
+singularity exec --nv deepvariant-opencode-gpu-vg.sif \
+  /opt/pangenome/run-pangenome-gpu.sh \
+  --fq1 SAMPLE.R1.fastq.gz --fq2 SAMPLE.R2.fastq.gz \
+  --rg '@RG\\tID:L1\\tPL:ILLUMINA\\tSM:SAMPLE' \
+  --gbz ... --dist ... --min ... --zipcodes ... --ref_paths ... \
+  --ref ... --ref_path_prefix CHM13v2#0# \
+  --autosome_interval /opt/pangenome/interval_files/chm13_t2t/autosome.bed \
+  --PAR_interval      /opt/pangenome/interval_files/chm13_t2t/PAR.bed \
+  --chrX_interval     /opt/pangenome/interval_files/chm13_t2t/chrX.bed \
+  --chrY_interval     /opt/pangenome/interval_files/chm13_t2t/chrY.bed \
+  --prefix SAMPLE --outdir out/
+```
+
+Verified on a host with V100S GPUs (driver 550.x, devices `/dev/nvidia0`,
+`/dev/nvidia1`). The image's `%test` validates `germline-pangenome-gpu.cwl`
+with `cwltool --validate` at build time. The CPU SIF (`sif-build.def`) remains
+the portable fallback for hosts without a GPU.
+
 ## Toy demo (self-contained)
 
-All toy inputs, job files and generated outputs live under `tests/toy/`.
-Reference paths inside the job files are absolute (currently
-`/home/tago/hackathon/tests/toy/`); adapt them to your checkout.
+All toy inputs and job files live under `tests/toy/`. The job files use
+**paths relative to their own directory** (`tests/toy/jobs/`), so cwltool can be
+run from anywhere in the checkout.
 
     tests/toy/
     ├── L1_R1.fastq, L1_R2.fastq, L2_R1.fastq, L2_R2.fastq   <- paired FASTQs (2 lanes)
     ├── toy.giraffe.gbz, toy.dist, toy.shortread.withzip.min, toy.shortread.zipcodes, mygraph.ref_paths.txt
     ├── ref.fa (+.fai) + autosome/PAR/chrX/chrY.bed
     ├── toy_in.cram                <- 2,400 reads aligned to ref.fa (decode with ref)
-    ├── cram2fq/                   <- reads recovered from toy_in.cram as FASTQ (collate -> fastq)
-    ├── jobs/                      <- ready-to-run job-order JSONs
-    └── results/                   <- outputs of the runs below (identical gVCFs)
-        ├── fastq_track/           <- TOY.*         (FASTQ -> vg giraffe)
-        ├── cram_track/            <- TOYCRAM.*     (CRAM -> FASTQ recovered in-workflow -> vg giraffe)
-        └── cram2fq_remap/         <- TOYCRAM2FQ.*  (CRAM -> FASTQ recovered manually -> vg giraffe)
+    └── jobs/                      <- ready-to-run job-order JSONs (paths relative to jobs/)
 
-Run the three modes (each takes ~2 min on the toy data):
+Run both tracks (each takes ~2 min on the toy data):
 
 ```bash
-export PATH=$HOME/.local/bin:$PATH            # vg, cwltool (node already present)
-cd /home/tago/hackathon
-
-# 1) FASTQ track: pair-end FASTQs -> vg giraffe (pangenome) -> DV
+# 1) FASTQ track: paired FASTQs (2 lanes) -> vg giraffe (pangenome) -> DV
 cwltool --no-container --outdir tests/toy/demo_out/fastq_track \
   Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/toy_job.json
 
@@ -205,22 +256,13 @@ cwltool --no-container --outdir tests/toy/demo_out/fastq_track \
 #    (samtools collate -> fastq -T ref) and re-mapped with vg giraffe
 cwltool --no-container --outdir tests/toy/demo_out/cram_track \
   Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/toy_cram_job.json
-
-# 3) same as (2), but the FASTQ recovery is done manually first:
-#    collate -> fastq -T ref -> then fed in as a normal FASTQ lane
-samtools collate -O tests/toy/toy_in.cram | samtools fastq --reference tests/toy/ref.fa \
-  -1 tests/toy/cram2fq/L1_R1.fastq -2 tests/toy/cram2fq/L1_R2.fastq \
-  -0 /dev/null -s /dev/null -
-cwltool --no-container --outdir tests/toy/demo_out/cram2fq_remap \
-  Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/cram2fq_job.json
 ```
 
 Each run produces `<prefix>.bam` (+`.bai`), `<prefix>.markdup.metrics` and five
-gVCFs (`autosome`, `PAR`, `chrX_female`, `chrX_male`, `chrY`, +`.tbi`). The five
-gVCFs are byte-identical across the three modes (verified with sha1sum), so the
-toy demo can be used as a fast smoke/regression test for the workflow.> (relative `File` paths in `tests/toy/jobs/*.json` resolve against the checkout
-> root; run `cwltool` from there. `toy_cram_job.json` covers the CRAM track,
-> `toy_job.json` the two-lane FASTQ track.)
+gVCFs (`autosome`, `PAR`, `chrX_female`, `chrX_male`, `chrY`, +`.tbi`). The two
+job files cover the FASTQ and CRAM tracks; swap the workflow path for
+`Workflows/germline-pangenome-gpu.cwl` to smoke-test the GPU variant on the same
+toy inputs.
 
 ## Release notes
 

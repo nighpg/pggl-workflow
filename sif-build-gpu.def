@@ -1,0 +1,115 @@
+# Self-contained GPU pangenome environment for the germline workflow
+#
+# DeepVariant 1.10.0 (GPU) + samtools + vg + node + cwltool + the pangenome
+# CWL workflow tree. The five DeepVariant steps run on the GPU (--use_gpu),
+# everything else stays on CPU. Requires:
+#   - host GPU with a CUDA driver (verified here: V100S, driver 550.x, devices
+#     /dev/nvidia0,/dev/nvidia1)
+#   - singularity/apptainer started with --nv (GPU passthrough)
+# The CPU SIF (deepvariant-opencode-cpu-vg.sif) is the CPU-only alternative.
+#
+# Build on a HOST that can pull the docker image (needs singularity/apptainer
+# with --fakeroot or docker):
+#
+#   cd /home/tago/hackathon
+#   singularity build deepvariant-opencode-gpu-vg.sif sif-build-gpu.def
+#
+# Usage on any host:
+#
+#   singularity exec --nv deepvariant-opencode-gpu-vg.sif \
+#     /opt/pangenome/run-pangenome-gpu.sh \
+#     --fq1 SAMPLE.R1.fastq.gz --fq2 SAMPLE.R2.fastq.gz \
+#     --rg '@RG\\tID:L1\\tPL:ILLUMINA\\tSM:SAMPLE' \
+#     --gbz ... --dist ... --min ... --zipcodes ... --ref_paths ... \
+#     --ref ... --ref_path_prefix CHM13v2#0# \
+#     --autosome_interval /opt/pangenome/interval_files/chm13_t2t/autosome.bed \
+#     --PAR_interval      /opt/pangenome/interval_files/chm13_t2t/PAR.bed \
+#     --chrX_interval     /opt/pangenome/interval_files/chm13_t2t/chrX.bed \
+#     --chrY_interval     /opt/pangenome/interval_files/chm13_t2t/chrY.bed \
+#     --prefix SAMPLE --outdir out/
+#
+# (run-pangenome-gpu.sh passes the GPU workflow; run-pangenome.sh stays CPU.)
+Bootstrap: docker
+From: google/deepvariant:1.10.0-gpu
+
+%files
+    sif-stage/vg /usr/local/bin/vg
+    sif-stage/node /usr/local/node-v20.18.0-linux-x64
+    sif-stage/wheels /opt/cwltool-wheels
+    Workflows /opt/pangenome/Workflows
+    Tools /opt/pangenome/Tools
+    scripts /opt/pangenome/scripts
+    interval_files /opt/pangenome/interval_files
+    image/opencode-linux-x64-baseline.tar.gz /opt/opencode.tar.gz
+
+%post
+    set -eux
+
+    test -s /usr/local/bin/vg
+    test -s /usr/local/node-v20.18.0-linux-x64/bin/node
+    test -n "$(ls /opt/cwltool-wheels)"
+    test -s /opt/opencode.tar.gz
+
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/node /usr/local/bin/node
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/npm /usr/local/bin/npm
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/npx /usr/local/bin/npx
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/corepack /usr/local/bin/corepack
+    node --version
+
+    python3 -m pip install --no-index --find-links /opt/cwltool-wheels \
+        cwltool==3.2.20260720092025
+
+    # GPU DeepVariant present (nvidia libs / opt/... CUDA)
+    test -x /opt/deepvariant/bin/run_deepvariant
+
+    # opencode: offline from the baseline tarball (the official curl installer
+    # downloads a build that needs glibc >= 2.34; the DeepVariant image is
+    # Ubuntu 20.04 / glibc 2.31, so the *baseline* binary is the right one)
+    mkdir -p /tmp/opencode-install
+    tar -xzf /opt/opencode.tar.gz -C /tmp/opencode-install
+    test -s /tmp/opencode-install/opencode
+    install -m 0755 /tmp/opencode-install/opencode /usr/local/bin/opencode
+    rm -rf /tmp/opencode-install /opt/opencode.tar.gz
+    command -v opencode
+    opencode --version
+
+    cat > /opt/pangenome/run-pangenome-gpu.sh <<'LAUNCHER'
+#!/bin/bash
+set -euo pipefail
+exec cwltool --no-container /opt/pangenome/Workflows/germline-pangenome-gpu.cwl "$@"
+LAUNCHER
+    chmod +x /opt/pangenome/run-pangenome-gpu.sh
+
+    rm -rf /opt/cwltool-wheels
+
+    command -v vg cwltool node run_deepvariant
+    vg version
+    cwltool --version
+    node --version
+
+%environment
+    export PATH=/usr/local/bin:/opt/deepvariant/bin:/opt/conda/envs/bio/bin:$PATH
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+    export TF_USE_LEGACY_KERAS=1
+    export NVIDIA_VISIBLE_DEVICES=all
+    export NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+%runscript
+    exec "$@"
+
+%test
+    command -v vg cwltool node run_deepvariant opencode
+    cwltool --validate --no-container \
+        /opt/pangenome/Workflows/germline-pangenome-gpu.cwl
+    test -x /opt/pangenome/run-pangenome-gpu.sh
+
+    opencode --version
+
+    export HOME=/tmp/opencode-test-home
+    export XDG_CONFIG_HOME="${HOME}/.config"
+    export XDG_CACHE_HOME="${HOME}/.cache"
+    export XDG_DATA_HOME="${HOME}/.local/share"
+    export XDG_STATE_HOME="${HOME}/.local/state"
+    mkdir -p "${XDG_CONFIG_HOME}" "${XDG_CACHE_HOME}" "${XDG_DATA_HOME}" "${XDG_STATE_HOME}"
+    opencode --version
