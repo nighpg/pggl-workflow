@@ -1,0 +1,4 @@
+# build assets (staged by scripts/stage-sif-assets.sh)
+sif-stage/
+image/
+*.sif

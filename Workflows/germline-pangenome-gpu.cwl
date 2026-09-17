@@ -92,8 +92,13 @@ inputs:
 
   threads:
     type: int
-    doc: Number of threads for vg giraffe, samtools and DeepVariant shards
+    doc: CPU threads for vg giraffe and samtools (does NOT control GPU devices)
     default: 32
+
+  gpu_count:
+    type: int
+    doc: Number of DeepVariant GPU shards (= TF GPU sessions, i.e. GPUs used by the caller)
+    default: 1
 
   emit_gam:
     type: boolean
@@ -207,7 +212,7 @@ steps:
       ref: ref
       reads: to_markdup_bam/bam
       interval: autosome_interval
-      num_shards: threads
+      num_shards: gpu_count
       prefix:
         source: prefix
         valueFrom: $(self + ".autosome")
@@ -220,7 +225,7 @@ steps:
       ref: ref
       reads: to_markdup_bam/bam
       interval: PAR_interval
-      num_shards: threads
+      num_shards: gpu_count
       prefix:
         source: prefix
         valueFrom: $(self + ".PAR")
@@ -233,7 +238,7 @@ steps:
       ref: ref
       reads: to_markdup_bam/bam
       interval: chrX_interval
-      num_shards: threads
+      num_shards: gpu_count
       prefix:
         source: prefix
         valueFrom: $(self + ".chrX_female")
@@ -246,7 +251,7 @@ steps:
       ref: ref
       reads: to_markdup_bam/bam
       interval: chrX_interval
-      num_shards: threads
+      num_shards: gpu_count
       postprocess_extra_args:
         valueFrom: "--haploid_contigs=chrX"
       prefix:
@@ -261,7 +266,7 @@ steps:
       ref: ref
       reads: to_markdup_bam/bam
       interval: chrY_interval
-      num_shards: threads
+      num_shards: gpu_count
       postprocess_extra_args:
         valueFrom: "--haploid_contigs=chrY"
       prefix:
