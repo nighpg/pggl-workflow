@@ -77,24 +77,15 @@ inputs:
       prefix: --postprocess_variants_extra_args
       position: 7
 
-  use_gpu:
-    type: boolean?
-    doc: Use the GPU for make_examples/call_variants (rendered as a bare
-         --use_gpu flag, matching run_deepvariant's add_argument_bool_flag)
-    default: true
-    inputBinding:
-      prefix: --use_gpu
-      position: 8
-
   prefix:
     type: string
     doc: Output file prefix
 
 arguments:
-  - position: 9
+  - position: 8
     prefix: --output_vcf
     valueFrom: $(inputs.prefix).vcf.gz
-  - position: 10
+  - position: 9
     prefix: --output_gvcf
     valueFrom: $(inputs.prefix).g.vcf.gz
 
