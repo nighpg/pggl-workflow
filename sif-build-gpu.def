@@ -37,6 +37,7 @@ From: google/deepvariant:1.10.0-gpu
     sif-stage/vg /usr/local/bin/vg
     sif-stage/node /usr/local/node-v20.18.0-linux-x64
     sif-stage/wheels /opt/cwltool-wheels
+    sif-stage/biobambam2 /opt/biobambam2
     Workflows /opt/pangenome/Workflows
     Tools /opt/pangenome/Tools
     scripts /opt/pangenome/scripts
@@ -51,6 +52,13 @@ From: google/deepvariant:1.10.0-gpu
     test -s /usr/local/node-v20.18.0-linux-x64/bin/node
     test -n "$(ls /opt/cwltool-wheels)"
     test -s /opt/opencode.tar.gz
+
+    # bamsormadup (biobambam2) for the markdup stage. Its jammy shared libs
+    # (libmaus2*, libgpgme, libnettle) ship in /opt/biobambam2/lib; the wrapper
+    # exposes them to the binary without polluting the system lib dirs.
+    test -x /opt/biobambam2/bin/bamsormadup
+    test -n "$(ls -A /opt/biobambam2/lib)"
+    ! LD_LIBRARY_PATH=/opt/biobambam2/lib ldd /opt/biobambam2/bin/bamsormadup | grep -q 'not found'
 
     ln -sf /usr/local/node-v20.18.0-linux-x64/bin/node /usr/local/bin/node
     ln -sf /usr/local/node-v20.18.0-linux-x64/bin/npm /usr/local/bin/npm
@@ -85,7 +93,14 @@ LAUNCHER
 
     rm -rf /opt/cwltool-wheels
 
-    command -v vg cwltool node run_deepvariant
+    cat > /usr/local/bin/bamsormadup <<'WRAP'
+#!/bin/bash
+export LD_LIBRARY_PATH=/opt/biobambam2/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+exec /opt/biobambam2/bin/bamsormadup "$@"
+WRAP
+    chmod +x /usr/local/bin/bamsormadup
+
+    command -v vg cwltool node run_deepvariant bamsormadup
     vg version
     cwltool --version
     node --version
@@ -102,7 +117,9 @@ LAUNCHER
     exec "$@"
 
 %test
-    command -v vg cwltool node run_deepvariant opencode
+    command -v vg cwltool node run_deepvariant opencode bamsormadup
+    test -x /opt/biobambam2/bin/bamsormadup
+    ! LD_LIBRARY_PATH=/opt/biobambam2/lib ldd /opt/biobambam2/bin/bamsormadup | grep -q 'not found'
     cwltool --validate --no-container \
         /opt/pangenome/Workflows/germline-pangenome-gpu.cwl
     test -x /opt/pangenome/run-pangenome-gpu.sh

@@ -39,6 +39,7 @@ From: image/deepvariant-opencode-cpu.sif
     sif-stage/vg /usr/local/bin/vg
     sif-stage/node /usr/local/node-v20.18.0-linux-x64
     sif-stage/wheels /opt/cwltool-wheels
+    sif-stage/biobambam2 /opt/biobambam2
     Workflows /opt/pangenome/Workflows
     Tools /opt/pangenome/Tools
     scripts /opt/pangenome/scripts
@@ -53,6 +54,12 @@ From: image/deepvariant-opencode-cpu.sif
     test -s /usr/local/node-v20.18.0-linux-x64/bin/node
     test -n "$(ls /opt/cwltool-wheels)"
 
+    # bamsormadup (biobambam2) for the markdup stage; private libs in
+    # /opt/biobambam2/lib, exposed via the /usr/local/bin wrapper.
+    test -x /opt/biobambam2/bin/bamsormadup
+    test -n "$(ls -A /opt/biobambam2/lib)"
+    ! LD_LIBRARY_PATH=/opt/biobambam2/lib ldd /opt/biobambam2/bin/bamsormadup | grep -q 'not found'
+
     # node v20.18.0 on PATH (via /usr/local/bin)
     ln -sf /usr/local/node-v20.18.0-linux-x64/bin/node /usr/local/bin/node
     ln -sf /usr/local/node-v20.18.0-linux-x64/bin/npm /usr/local/bin/npm
@@ -66,8 +73,8 @@ From: image/deepvariant-opencode-cpu.sif
 
     # workflow tree present (relative ../Tools, ../scripts must resolve)
     test -f /opt/pangenome/Workflows/germline-pangenome-cpu.cwl
-    test -f /opt/pangenome/Tools/samtools-to-markdup-bam.cwl
-    test -f /opt/pangenome/scripts/samtools-to-markdup-bam.sh
+    test -f /opt/pangenome/Tools/bamsormadup-to-markdup-bam.cwl
+    test -f /opt/pangenome/scripts/bamsormadup-to-markdup-bam.sh
     test -f /opt/pangenome/interval_files/chm13_t2t/autosome.bed
     test -f /opt/pangenome/tools/filter_fastq.py
 
@@ -82,8 +89,15 @@ LAUNCHER
     # drop staged wheels (kept cwltool installed above)
     rm -rf /opt/cwltool-wheels
 
+    cat > /usr/local/bin/bamsormadup <<'WRAP'
+#!/bin/bash
+export LD_LIBRARY_PATH=/opt/biobambam2/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+exec /opt/biobambam2/bin/bamsormadup "$@"
+WRAP
+    chmod +x /usr/local/bin/bamsormadup
+
     # sanity: every CLI must resolve
-    command -v vg cwltool node run_deepvariant samtools bcftools
+    command -v vg cwltool node run_deepvariant samtools bcftools bamsormadup
     vg version
     cwltool --version
     node --version
@@ -99,7 +113,9 @@ LAUNCHER
     exec "$@"
 
 %test
-    command -v vg cwltool node run_deepvariant samtools bcftools
+    command -v vg cwltool node run_deepvariant samtools bcftools bamsormadup
+    test -x /opt/biobambam2/bin/bamsormadup
+    ! LD_LIBRARY_PATH=/opt/biobambam2/lib ldd /opt/biobambam2/bin/bamsormadup | grep -q 'not found'
     vg version
     cwltool --version
     cwltool --validate --no-container \
