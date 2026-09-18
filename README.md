@@ -230,8 +230,9 @@ the base image). Before building, run `./scripts/stage-sif-assets.sh` once:
 it creates `sif-stage/` (vg, node, cwltool wheels, `biobambam2/`) and `image/`
 (the CPU base SIF for the `localimage` bootstrap + the opencode tarball) by
 copying from the working repo, falling back to the original downloads
-(docker / nodejs.org / `pip download` / the Ubuntu jammy archive for the
-biobambam2 debs) when that is unavailable. `bamsormadup` is installed under
+(GitHub releases for vg / nodejs.org / `pip download` / the Ubuntu jammy
+archive for the biobambam2 debs) when that is unavailable. No docker is
+needed anywhere. `bamsormadup` is installed under
 `/opt/biobambam2` with its private `libmaus2`/`libgpgme`/`libnettle` libs, and
 exposed as `/usr/local/bin/bamsormadup` via a wrapper that sets
 `LD_LIBRARY_PATH` (so no system lib dirs are touched). Python is 3.10 with no
