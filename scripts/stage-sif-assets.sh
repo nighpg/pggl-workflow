@@ -5,7 +5,8 @@
 #   image/      -> deepvariant-opencode-cpu.sif (CPU base for the localimage
 #                  bootstrap) and opencode-linux-x64-baseline.tar.gz (GPU SIF)
 # Default source is the working repo (hackathon); when it is unavailable the
-# script falls back to the original downloads (docker + nodejs.org + pip).
+# script falls back to the original downloads (GitHub releases + nodejs.org +
+# pip + the Ubuntu jammy archive).  No docker is required anywhere.
 # Run this from the repo root ONCE per checkout, before `singularity build`:
 #   ./scripts/stage-sif-assets.sh
 set -euo pipefail
@@ -23,12 +24,6 @@ LIBGPGME11_VERSION="1.16.0-1.2ubuntu4"
 LIBNETTLE8_VERSION="3.7.3-1build2"
 
 mkdir -p sif-stage sif-stage/wheels image
-
-fetch_vg() {
-    docker create --name vgstage "quay.io/vgteam/vg:${VG_VERSION}" >/dev/null
-    docker cp "vgstage:/vg" sif-stage/vg
-    docker rm vgstage >/dev/null
-}
 
 # Stage bamsormadup + its private shared libraries into sif-stage/biobambam2/.
 # The jammy debs are used (glibc 2.34) because the DeepVariant 1.10 base is
@@ -80,10 +75,13 @@ echo "==> vg ${VG_VERSION}"
 if [ ! -s sif-stage/vg ]; then
     if [ -s "${SRC}/sif-stage/vg" ]; then
         cp -f "${SRC}/sif-stage/vg" sif-stage/vg
-    elif command -v docker >/dev/null; then
-        fetch_vg
+    elif command -v curl >/dev/null; then
+        echo "    downloading vg from GitHub releases (no docker required)"
+        curl -fsSLo sif-stage/vg \
+            "https://github.com/vgteam/vg/releases/download/${VG_VERSION}/vg"
     else
-        echo "ERROR: no 'sif-stage/vg' and no docker to fetch it from" >&2; exit 1
+        echo "ERROR: no 'sif-stage/vg' and no curl (GitHub releases) available" >&2
+        exit 1
     fi
 fi
 chmod +x sif-stage/vg
