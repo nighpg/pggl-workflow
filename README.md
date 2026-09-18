@@ -109,7 +109,7 @@ on `$PATH` in the image home.
 cwltool --validate --no-container Workflows/germline-pangenome-cpu.cwl
 
 # CPU track from FASTQs, native tools (no containers, no GPU):
-cwltool --no-container --outdir out/ Workflows/germline-pangenome-cpu.cwl \
+cwltool --no-container --parallel --outdir out/ Workflows/germline-pangenome-cpu.cwl \
   --fq1 R1_L1.fastq --fq1 R1_L2.fastq \
   --fq2 R2_L1.fastq --fq2 R2_L2.fastq \
   --rg "@RG\\tID:L1\\tPL:ILLUMINA\\tSM:SAMPLE" \
@@ -125,7 +125,7 @@ cwltool --no-container --outdir out/ Workflows/germline-pangenome-cpu.cwl \
 
 # CPU track from a CRAM (aligned on ref; reads are recovered to FASTQ and
 # re-mapped onto the pangenome, so the graph + giraffe indexes are required):
-cwltool --no-container --outdir out/ Workflows/germline-pangenome-cpu.cwl \
+cwltool --no-container --parallel --outdir out/ Workflows/germline-pangenome-cpu.cwl \
   --cram SAMPLE.aligned.cram \
   --gbz graph.gbz --dist graph.dist --min graph.min --zipcodes graph.zipcodes \
   --ref_paths graph.ref_paths.txt --ref Homo_sapiens_assembly38.fasta \
@@ -136,6 +136,18 @@ cwltool --no-container --outdir out/ Workflows/germline-pangenome-cpu.cwl \
   --chrY_interval interval_files/chrY.bed \
   --prefix SAMPLE --threads 32
 ```
+
+**`cwltool --parallel`**: the workflow only executes steps in parallel when
+cwltool is told to run every job whose inputs are ready at the same time; by
+default it runs them one after another. Pass `--parallel` (short `-p`) so the
+scattered jobs really overlap — the `align_chunks` giraffe blocks, the
+`autosome_chunks_count` chunks, and the per-chunk DeepVariant steps. This is
+required for `--gpu_count > 1` to keep more than one GPU busy, and without it a
+real WGS run is dramatically slower. Because `--parallel` dispatches all ready
+jobs at once, peak CPU is `--threads` × the number of concurrent jobs: size
+`--threads` to the node's core count (e.g. 64 on a 64-core box) and raise
+`align_chunks` only while the node has the memory (each block is a separate
+process that reloads the whole graph, see *Parallelisation* below).
 
 A job-order JSON can be used instead of CLI inputs, see **Toy demo** below
 (`tests/toy/jobs/`); omit the `fq1`/`fq2`/`rg` keys when using `cram`.
@@ -164,7 +176,7 @@ five variant-calling steps (`vg giraffe` and `samtools` stay on CPU).
 ```bash
 cwltool --validate --no-container Workflows/germline-pangenome-gpu.cwl
 
-cwltool --no-container --outdir out/ Workflows/germline-pangenome-gpu.cwl \
+cwltool --no-container --parallel --outdir out/ Workflows/germline-pangenome-gpu.cwl \
   --fq1 R1_L1.fastq --fq2 R2_L1.fastq \
   --rg "@RG\\tID:L1\\tPL:ILLUMINA\\tSM:SAMPLE" \
   --gbz graph.gbz --dist graph.dist --min graph.min --zipcodes graph.zipcodes \
