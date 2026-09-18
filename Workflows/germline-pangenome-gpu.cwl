@@ -75,6 +75,19 @@ inputs:
     type: File
     doc: Interval BED file for autosome regions
 
+  autosome_chunks:
+    type:
+      - type: array
+        items: File
+      - "null"
+    doc: Optional explicit list of BED files partitioning the autosome. Leave unset to derive the chunks automatically (see autosome_chunks_count); when set, these are used verbatim, in this order.
+    default: []
+
+  autosome_chunks_count:
+    type: int?
+    doc: Convenience knob for automatic autosome chunking. Omit or 0 = a single chunk over the whole autosome (the previous default); N>=2 groups contiguous contigs into ~N bp-balanced chunks (a contig is never split); if N >= the number of contigs, one chunk per contig. Ignored when autosome_chunks is set. DeepVariant still shards each chunk internally via base_shards. Non-HS37 DNA sites that fall in no chunk are dropped.
+    default: 0
+
   PAR_interval:
     type: File
     doc: Interval BED file for PAR regions
@@ -110,6 +123,11 @@ inputs:
     type: boolean
     doc: Keep the final duplicate-marked BAM (prefix.bam / .bai) as a workflow output. The BAM is always produced internally because DeepVariant requires BAM; set false to avoid materialising it in the output directory (e.g. to save disk).
     default: true
+
+  align_chunks:
+    type: int
+    doc: Number of parallel vg giraffe processes per lane. The lane FASTQ pair is sharded into this many read-pair blocks (pairs never split), mapped in parallel with threads/chunks threads each, and the per-block BAMs are concatenated with samtools cat. Alignment results are identical to a single process (only lane BAM record order changes); total memory use stays ~constant while the per-process peak drops. Set 1 for the original single-process behaviour.
+    default: 1
 
 steps:
   lane_from_rg:
@@ -148,7 +166,7 @@ steps:
       - rg
 
   giraffe:
-    run: ../Tools/vg-giraffe.cwl
+    run: ../Tools/giraffe-sharded.cwl
     in:
       gbz: gbz
       dist: dist
@@ -161,6 +179,7 @@ steps:
       fq2: combine_lanes/fq2
       lane: lane_from_rg/lane_names
       emit_gam: emit_gam
+      chunks: align_chunks
     scatter: [fq1, fq2, read_group, lane]
     scatterMethod: dotproduct
     out:
@@ -174,8 +193,11 @@ steps:
     out:
       - gam
 
-  postprocess_lane:
-    run: ../Tools/samtools-postprocess-lane.cwl
+  # Lane prep for bamsormadup ("B"): strip the graph reference prefix and apply
+  # the full @RG, keeping the input name-collated order (no sort -n / fixmate /
+  # sort). bamsormadup then does fixmate + coordinate sort + markdup in one pass.
+  prep_lane:
+    run: ../Tools/samtools-prep-lane.cwl
     in:
       bam: giraffe/bam
       rg: combine_lanes/rg
@@ -185,13 +207,13 @@ steps:
     scatter: [bam, rg, lane]
     scatterMethod: dotproduct
     out:
-      - sorted_bam
+      - namecol_bam
 
   to_markdup_bam:
-    run: ../Tools/samtools-to-markdup-bam.cwl
+    run: ../Tools/bamsormadup-to-markdup-bam.cwl
     in:
-      sorted_bams:
-        source: postprocess_lane/sorted_bam
+      namecol_bams:
+        source: prep_lane/namecol_bam
         valueFrom: '$(self != null && self.length > 0 ? self : null)'
       prefix: prefix
       threads: threads
@@ -207,18 +229,47 @@ steps:
     out:
       - bam
 
+  make_autosome_chunks:
+    run: ../Tools/make-autosome-chunks.cwl
+    in:
+      bed: autosome_interval
+      count: autosome_chunks_count
+      user_chunks: autosome_chunks
+    out:
+      - chunks
+
+  autosome_regions:
+    run: ../Tools/autosome-regions.cwl
+    in:
+      autosome_chunks: make_autosome_chunks/chunks
+      autosome_interval: autosome_interval
+      base_shards: gpu_count
+      prefix: prefix
+    out:
+      - chunks
+      - prefixes
+      - shards
+
   deepvariant_autosome:
     run: ../Tools/deepvariant-gpu.cwl
     in:
       ref: ref
       reads: to_markdup_bam/bam
-      interval: autosome_interval
-      num_shards: gpu_count
-      prefix:
-        source: prefix
-        valueFrom: $(self + ".autosome")
+      interval: autosome_regions/chunks
+      num_shards: autosome_regions/shards
+      prefix: autosome_regions/prefixes
+    scatter: [interval, num_shards, prefix]
+    scatterMethod: dotproduct
     out:
       - gvcf
+
+  concat_autosome:
+    run: ../Tools/concat-gvcfs.cwl
+    in:
+      prefix: prefix
+      gvcf: deepvariant_autosome/gvcf
+    out:
+      - out_gvcf
 
   deepvariant_PAR:
     run: ../Tools/deepvariant-gpu.cwl
@@ -297,7 +348,7 @@ outputs:
   gvcf_autosome:
     type: File
     doc: Diploid gVCF for autosome regions (reference coordinates)
-    outputSource: deepvariant_autosome/gvcf
+    outputSource: concat_autosome/out_gvcf
     secondaryFiles:
       - .tbi
 

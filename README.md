@@ -89,7 +89,8 @@ backbone:
 ## Behind the scenes (design notes)
 
 - **Contig names**: giraffe writes full PanSN path names (`GRCh38#0#chr1`) into `@SQ`. The workflows strip the prefix on the header only (`samtools reheader -c 'sed ...'`), so the output BAM/CRAM matches `Homo_sapiens_assembly38.fasta` and existing interval BEDs.
-- **Read groups**: `vg giraffe -R/-N` only carries ID/SM; the full `@RG` string is applied afterwards with `samtools addreplacerg -m overwrite_all -w`.
+- **Read groups**: `vg giraffe -R/-N` only carries ID/SM; the full `@RG` string is applied afterwards with `samtools addreplacerg -m overwrite_all -w -O BAM,level=6`. The output format is pinned because this `samtools` build otherwise writes **uncompressed** BAM (a ~5x size blow-up, e.g. 335 GB instead of ~63 GB for one lane).
+- **Duplicate marking**: lane prep (`samtools reheader` + `addreplacerg`) keeps the input name-collated order; the per-lane BAMs are concatenated and passed to biobambam2 **`bamsormadup`**, which does mate fixing + coordinate sorting + duplicate marking (incl. optical duplicates) in one streaming pass. This replaces the old `samtools sort -n` / `fixmate -m` / `sort` + `samtools markdup` chain (~2x faster end to end; `fixmate` was the single largest cost) and needs no `MC`/`ms` tags.
 - **Ploidy**: `--haploid-contigs chrX` / `--haploid-contigs chrY` on the male tracks reproduces HaplotypeCaller `--ploidy 1`. `chrX.bed` already excludes PAR, so no PAR handling is needed for the callers.
 - **BQSR** is dropped (DeepVariant does not need it); the CPU track emits `markdup` metrics instead, mirroring the WGSpipeline output slot.
 - **rg `\t` escaping**: pass `--rg "@RG\\tID:..."` on the shell (literal backslash-t). cwltool passes it through unchanged; the postprocess script converts it to a real tab.
@@ -116,6 +117,7 @@ cwltool --no-container --outdir out/ Workflows/germline-pangenome-cpu.cwl \
   --gbz graph.gbz --dist graph.dist --min graph.min --zipcodes graph.zipcodes \
   --ref_paths graph.ref_paths.txt --ref Homo_sapiens_assembly38.fasta \
   --autosome_interval interval_files/autosome.bed \
+  --autosome_chunks_count 8 \
   --PAR_interval interval_files/PAR.bed \
   --chrX_interval interval_files/chrX.bed \
   --chrY_interval interval_files/chrY.bed \
@@ -128,6 +130,7 @@ cwltool --no-container --outdir out/ Workflows/germline-pangenome-cpu.cwl \
   --gbz graph.gbz --dist graph.dist --min graph.min --zipcodes graph.zipcodes \
   --ref_paths graph.ref_paths.txt --ref Homo_sapiens_assembly38.fasta \
   --autosome_interval interval_files/autosome.bed \
+  --autosome_chunks_count 8 \
   --PAR_interval interval_files/PAR.bed \
   --chrX_interval interval_files/chrX.bed \
   --chrY_interval interval_files/chrY.bed \
@@ -143,11 +146,15 @@ CPU-only environment prerequisites (this hackathon box already has all of them):
 - `cwltool` (`pip install cwltool`) and `node` (for inline JS expressions) in `$PATH`
 - `run_deepvariant` (`/opt/deepvariant/bin`) and `samtools`/`bcftools`
   (`/opt/conda/envs/bio/bin`) on `$PATH` — already set inside the SIF
+- `bamsormadup` (biobambam2) on `$PATH` for the duplicate-marking step; bundled
+  in both SIFs, or install the `biobambam2` distro package when running natively
 
 The container images (used when Docker is available) are:
 `quay.io/vgteam/vg:v1.70.0`,
 `google/deepvariant:1.10.0`,
-`quay.io/biocontainers/samtools:1.21--h96c455f_1`.
+`quay.io/biocontainers/samtools:1.21--h96c455f_1`,
+`quay.io/biocontainers/biobambam2` (hint only for the markdup step; `bamsormadup`
+and `samtools` must both be on `$PATH` under `--no-container`).
 
 The GPU workflow additionally uses `google/deepvariant:1.10.0-gpu` for the
 five variant-calling steps (`vg giraffe` and `samtools` stay on CPU).
@@ -163,6 +170,7 @@ cwltool --no-container --outdir out/ Workflows/germline-pangenome-gpu.cwl \
   --gbz graph.gbz --dist graph.dist --min graph.min --zipcodes graph.zipcodes \
   --ref_paths graph.ref_paths.txt --ref Homo_sapiens_assembly38.fasta \
   --autosome_interval interval_files/autosome.bed \
+  --autosome_chunks_count 22 \
   --PAR_interval interval_files/PAR.bed \
   --chrX_interval interval_files/chrX.bed \
   --chrY_interval interval_files/chrY.bed \
@@ -184,7 +192,8 @@ want to restrict which GPUs are used, pin them via `NVIDIA_VISIBLE_DEVICES`
 ## Self-contained SIF (no-setup on any host)
 
 `./sif-build.def` produces a single image containing DeepVariant, samtools/bcftools,
-`vg`, `node`, `cwltool`, and the workflow/tool/script tree under `/opt/pangenome`.
+`vg`, `node`, `cwltool`, biobambam2 (`bamsormadup`) and the workflow/tool/script
+tree under `/opt/pangenome`.
 Reference data (the ~54 GB JaSaPaGe graph + indexes + linear ref) is **not**
 bundled; bind-mount it or pass host paths at runtime.
 
@@ -206,23 +215,28 @@ singularity exec deepvariant-opencode-cpu-vg.sif \
 
 Build notes: singularity is required on the build host (not installable inside
 the base image). Before building, run `./scripts/stage-sif-assets.sh` once:
-it creates `sif-stage/` (vg, node, cwltool wheels) and `image/` (the CPU base
-SIF for the `localimage` bootstrap + the opencode tarball) by copying from the
-working repo, falling back to the original downloads (docker / nodejs.org /
-`pip download`) when that is unavailable. Python is 3.10 with no venv and no
-PEP 668 marker, so cwltool is installed system-wide from the wheels staged in
-`sif-stage/` (offline). The final image's `%environment` already sets `PATH` and
-the image's `/opt/deepvariant/bin/run_deepvariant` needs `TF_USE_LEGACY_KERAS=1`.
-`tools/filter_fastq.py` is bundled at `/opt/pangenome/tools/` in both images.
+it creates `sif-stage/` (vg, node, cwltool wheels, `biobambam2/`) and `image/`
+(the CPU base SIF for the `localimage` bootstrap + the opencode tarball) by
+copying from the working repo, falling back to the original downloads
+(docker / nodejs.org / `pip download` / the Ubuntu jammy archive for the
+biobambam2 debs) when that is unavailable. `bamsormadup` is installed under
+`/opt/biobambam2` with its private `libmaus2`/`libgpgme`/`libnettle` libs, and
+exposed as `/usr/local/bin/bamsormadup` via a wrapper that sets
+`LD_LIBRARY_PATH` (so no system lib dirs are touched). Python is 3.10 with no
+venv and no PEP 668 marker, so cwltool is installed system-wide from the wheels
+staged in `sif-stage/` (offline). The final image's `%environment` already sets
+`PATH` and the image's `/opt/deepvariant/bin/run_deepvariant` needs
+`TF_USE_LEGACY_KERAS=1`. `tools/filter_fastq.py` is bundled at
+`/opt/pangenome/tools/` in both images.
 
 ### GPU SIF
 
 `./sif-build-gpu.def` is the GPU equivalent, based on
-`google/deepvariant:1.10.0-gpu` (Ubuntu 20.04 + CUDA). It adds the GPU workflow
-(`/opt/pangenome/Workflows/germline-pangenome-gpu.cwl`) and a
-`/opt/pangenome/run-pangenome-gpu.sh` launcher; vg, samtools and cwltool are
-installed exactly as in the CPU image, so only the five DeepVariant steps use
-the GPU.
+`google/deepvariant:1.10.0-gpu` (Ubuntu 22.04 / glibc 2.35 + CUDA). It adds the
+GPU workflow (`/opt/pangenome/Workflows/germline-pangenome-gpu.cwl`) and a
+`/opt/pangenome/run-pangenome-gpu.sh` launcher; vg, samtools, cwltool and
+biobambam2 are installed exactly as in the CPU image, so only the five
+DeepVariant steps use the GPU.
 
 ```bash
 # Run the same staging first (build assets are shared with the CPU SIF):
@@ -282,6 +296,10 @@ job files cover the FASTQ and CRAM tracks; swap the workflow path for
 `Workflows/germline-pangenome-gpu.cwl` to smoke-test the GPU variant on the same
 toy inputs.
 
+`jobs/toy_job.json` (and the top-level `toy.json`) also show the new
+`autosome_chunks_count` input (the toy autosome has a single contig, so any
+count there just yields one chunk).
+
 Two job files demonstrate the retention options (identical gVCFs in all three
 cases):
 
@@ -294,6 +312,61 @@ cwltool --no-container --outdir tests/toy/demo_out/emit_gam \
 cwltool --no-container --outdir tests/toy/demo_out/no_bam \
   Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/toy_keep_bam_job.json
 ```
+
+## Parallelisation
+
+Two workflow inputs speed up the two dominant steps of a whole-genome run
+(verified on a 30x WGS: `vg giraffe` ~6h20m and autosome DeepVariant ~6h20m on
+a 64-thread CPU box):
+
+- `align_chunks` (int, default `1`): shard each lane's FASTQ pair into this many
+  read-pair blocks and run `vg giraffe -> surject` **in parallel** (each block
+  gets `ceil(threads/align_chunks)` threads), then concatenate the per-block BAMs
+  with `samtools cat`. A block never splits a read pair, so **every read is
+  aligned identically** to a single process; only the lane BAM record order
+  changes (bamsormadup normalises it downstream). Total memory stays
+  roughly constant while the per-process peak drops by `align_chunks`. Example
+  `--align_chunks 8` gives ~4-6x speed-up of the mapping step on top of the
+  per-lane scatter.
+
+- `autosome_chunks_count` (int, default `0`): **the easy way to chunk the
+  autosome.** The workflow derives the chunk BEDs itself from `autosome_interval`
+  (no per-chunk files to prepare or list). `0` (or omitting it) keeps a single
+  chunk over the whole autosome (the previous behaviour); `N>=2` groups
+  contiguous contigs into ~`N` bp-balanced chunks, and an `N` at or above the
+  number of contigs gives one chunk per contig. A contig is never split across
+  chunks. Each chunk still gets `ceil(base_shards / #chunks)` DeepVariant shards
+  (CPU: `threads`; GPU: `gpu_count`).
+
+- `autosome_chunks` (BED `File[]`, default `[]`): optional **explicit** chunk
+  override, used verbatim in the given order. Leave it unset to let
+  `autosome_chunks_count` derive the chunks (recommended). The chunks are run
+  **in parallel** and the per-chunk gVCFs are merged with `bcftools concat -a`.
+
+  For **manual** chunks, adjacent regions must be chained in BED half-open
+  coordinates: `chunk[i+1].start == chunk[i].end`, otherwise the boundary base
+  is left uncalled (the automatic contig split above is always gap-free).
+
+  A helper that writes one BED per contig is still available if you want files
+  on disk, but it is no longer needed for normal runs:
+
+  ```bash
+  scripts/split-autosome-bed.sh autosome.bed autosome_chunks/   # -> list on stdout
+  ```
+
+### Result equivalence
+
+Verified on the toy data (`align_chunks=2` and two manually halved autosome
+chunks vs the default single-process run):
+
+- the 2400 paired reads are aligned identically (per-record comparison after
+  sorting);
+- all variant (PASS, non-`<*>`) records are identical, and the set of called
+  bases is the same;
+- the number of **reference (REF) blocks** can differ: DeepVariant emits a
+  reference block every time a candidate window ends, which depends on its
+  internal shard partitioning of each region, so chunked runs may merge or split
+  `<*>` blocks differently. Variant records and genotypes are unaffected.
 
 ## Release notes
 
