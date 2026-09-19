@@ -1,0 +1,31 @@
+{
+  "fq1": [
+    {"class": "File", "path": "../L1_R1.fastq"},
+    {"class": "File", "path": "../L2_R1.fastq"}
+  ],
+  "fq2": [
+    {"class": "File", "path": "../L1_R2.fastq"},
+    {"class": "File", "path": "../L2_R2.fastq"}
+  ],
+  "rg": [
+    "@RG\\tID:L1\\tPL:ILLUMINA\\tSM:TOYSV",
+    "@RG\\tID:L2\\tPL:ILLUMINA\\tSM:TOYSV"
+  ],
+  "gbz": {"class": "File", "path": "../toy_sv.giraffe.gbz"},
+  "dist": {"class": "File", "path": "../toy_sv.dist"},
+  "min": {"class": "File", "path": "../toy_sv.shortread.withzip.min"},
+  "zipcodes": {"class": "File", "path": "../toy_sv.shortread.zipcodes"},
+  "ref_paths": {"class": "File", "path": "../toy_sv.ref_paths.txt"},
+  "ref": {"class": "File", "path": "../ref.fa"},
+  "ref_path_prefix": "",
+  "autosome_interval": {"class": "File", "path": "../autosome.bed"},
+  "PAR_interval": {"class": "File", "path": "../PAR.bed"},
+  "chrX_interval": {"class": "File", "path": "../chrX.bed"},
+  "chrY_interval": {"class": "File", "path": "../chrY.bed"},
+  "prefix": "TOYSV",
+  "threads": 4,
+  "align_chunks": 2,
+  "call_sv": true,
+  "snarls": {"class": "File", "path": "../toy_sv.snarls"},
+  "sv_min_length": 50
+}

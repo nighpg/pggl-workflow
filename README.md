@@ -44,6 +44,9 @@ The pangenome graph + `giraffe` indexes (`gbz`, `dist`, `min`, `zipcodes`,
 | `threads` | `int` | CPU threads (default 32) |
 | `emit_gam` | `boolean` | Keep the per-lane graph-space alignments (`<prefix>.<lane>.gam`) as workflow outputs (default `false`). Adds one GAM write per lane; the BAM is always produced from the same one-pass via `vg surject` |
 | `keep_bam` | `boolean` | Materialise the final duplicate-marked `<prefix>.bam` (+`.bai`) in the output directory (default `true`). Set `false` to skip it; the BAM is still built internally because DeepVariant requires it |
+| `call_sv` | `boolean` | Genotype the SVs embedded in the pangenome graph (`vg pack` + `vg call`) and emit `<prefix>.sv.vcf.gz` (default `false`) |
+| `snarls` | `File` | Precomputed snarls for the graph (`vg snarls`); optional but strongly recommended for whole-genome graphs. Ignored when `call_sv` is false |
+| `sv_min_length` | `int` | Minimum graph-site traversal length to be genotyped as an SV (`vg call -c`, default 50) |
 
 ## Outputs
 
@@ -56,6 +59,7 @@ The pangenome graph + `giraffe` indexes (`gbz`, `dist`, `min`, `zipcodes`,
 <prefix>.chrX_male.g.vcf.gz      (+ .tbi)  haploid (--haploid-contigs chrX)
 <prefix>.chrY.g.vcf.gz           (+ .tbi)  haploid (--haploid-contigs chrY)
 <prefix>.<lane>.gam                           per-lane graph-space alignment (only when emit_gam=true)
+<prefix>.sv.vcf.gz               (+ .tbi)  genotyped graph SVs (only when call_sv=true)
 ```
 
 ## Preparing a graph
@@ -64,8 +68,10 @@ The pangenome graph + `giraffe` indexes (`gbz`, `dist`, `min`, `zipcodes`,
 # Auto-build the =>giraffe index set<= from a GBZ and validate the linear reference
 ./scripts/prepare_pangenome_indexes.sh path/to/graph.gbz mygraph GRCh38 Homo_sapiens_assembly38.fasta
 # produces mygraph.ref_paths.txt, mygraph.dist, mygraph.min, mygraph.zipcodes
+# plus mygraph.snarls (only needed for the call_sv / SV genotyping track)
 # and suggests the ref_path_prefix to pass to the workflows
 export SKIP_AUTOINDEX=1   # when the graph already ships .dist/.min/.zipcodes (e.g. HPRC)
+export SKIP_SNARLS=1      # when SV genotyping (call_sv) is not needed
 ```
 
 The script now auto-detects the reference sample: it keeps only full-length
@@ -324,6 +330,55 @@ cwltool --no-container --outdir tests/toy/demo_out/emit_gam \
 # drop the final BAM from the outputs (still built internally for DeepVariant)
 cwltool --no-container --outdir tests/toy/demo_out/no_bam \
   Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/toy_keep_bam_job.json
+```
+
+## Structural variants
+
+`call_sv: true` genotypes the structural variants that are **already embedded in
+the pangenome graph** and writes them as `<prefix>.sv.vcf.gz` (+`.tbi`) in the
+same reference coordinates as the BAM and the gVCFs:
+
+```bash
+cwltool --no-container --parallel --outdir out/ Workflows/germline-pangenome-cpu.cwl \
+  ... \
+  --call_sv --snarls graph.snarls --sv_min_length 50
+```
+
+How it works: each `vg giraffe` block feeds its GAM stream to `vg pack` through
+a FIFO, so the read support is built **without ever writing the GAM to disk**;
+the per-block packs are summed with `vg pack -i` into one lane pack, the lane
+packs are summed into one sample pack, and `vg call -z -c <sv_min_length>`
+genotypes it against the GBZ. Summing packs is exact — the sample pack is
+identical to one built from a single GAM holding every lane's alignments.
+
+Notes and limits:
+
+- **Only variation present in the graph is genotyped.** vg cannot discover novel
+  SVs (its own documentation states that augmentation-based de novo calling does
+  not work for SVs), so novel events still need a linear caller such as Manta or
+  Delly run on `<prefix>.bam`.
+- **`snarls` should be precomputed.** `vg snarls graph.gbz > graph.snarls` once
+  per graph; without it `vg call` recomputes them on every run, which is
+  expensive on a whole-genome graph.
+- **Memory.** Every alignment block runs its own `vg pack` process, so peak
+  memory grows with `align_chunks`; lower `align_chunks` when enabling
+  `call_sv` on a large graph. `vg call` itself is run as a single process
+  threaded with `-t`: scattering it per contig would make every job load the
+  whole GBZ and snarls, multiplying memory by the contig count instead of
+  dividing the work.
+- **Contig names.** `vg call` writes plain contig names in the `CHROM` column but
+  keeps the full PanSN path name in the `##contig` headers; the workflow strips
+  `ref_path_prefix` from both so the VCF lines up with the BAM and the interval
+  BEDs. The `##contig` block is also re-emitted in `ref_paths` order — i.e. the
+  BAM `@SQ` order — because `bcftools sort` orders records by the header and
+  tools that compare sequence dictionaries (GATK) reject a mismatched order.
+
+A self-contained toy fixture lives in `tests/toy_sv/` (a 200 bp deletion, a
+150 bp insertion and a 120 bp deletion, all heterozygous):
+
+```bash
+cwltool --no-container --outdir tests/toy_sv/demo_out \
+  Workflows/germline-pangenome-cpu.cwl tests/toy_sv/jobs/toy_sv_job.json
 ```
 
 ## Parallelisation

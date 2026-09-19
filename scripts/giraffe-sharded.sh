@@ -9,8 +9,15 @@
 # Per-block threads = ceil(threads / chunks), keeping total CPU ~constant
 # while dividing vg's peak per-process memory by `chunks`.
 #
+# With <call_sv> set, every block also builds a `vg pack` coverage index from
+# its own GAM stream (no GAM on disk) and the per-block packs are summed into
+# one lane pack with `vg pack -i`; summing is exact, so the lane pack equals a
+# pack built from the unsharded GAM. Note that each block then runs its own
+# vg pack process, so enabling this multiplies peak memory by <chunks>.
+#
 # Usage: giraffe-sharded.sh <gbz> <dist> <min> <zipcodes> <ref_paths>
-#              <threads> <read_group> <sample> <fq1> <fq2> <lane> <emit_gam> <chunks>
+#              <threads> <read_group> <sample> <fq1> <fq2> <lane> <emit_gam>
+#              <chunks> [call_sv]
 set -euo pipefail
 
 GBZ=$1
@@ -26,6 +33,7 @@ FQ2=${10}
 LANE=${11}
 EMIT_GAM=${12}
 CHUNKS=${13:-1}
+CALL_SV=${14:-false}
 
 # Byte-oriented (no multibyte locale) so mawk/wc stay on the fast path.
 export LC_ALL=C
@@ -65,9 +73,11 @@ fi
 pids=()
 for i in $(seq 1 "$CHUNKS"); do
     (
+        PACK_ARG=""
+        [ "$CALL_SV" = "true" ] && PACK_ARG="${LANE}.c${i}.pack"
         bash vg-giraffe.sh "$GBZ" "$DIST" "$MIN" "$ZIP" "$REF_PATHS" \
             "$CTHREADS" "$RG" "$SM" "shards/c${i}.fq1" "shards/c${i}.fq2" \
-            "${LANE}.c${i}" "$EMIT_GAM"
+            "${LANE}.c${i}" "$EMIT_GAM" "$PACK_ARG"
     ) &
     pids+=("$!")
 done
@@ -94,8 +104,21 @@ if [ "$EMIT_GAM" = "true" ]; then
     done
 fi
 
+if [ "$CALL_SV" = "true" ]; then
+    if [ "$CHUNKS" -eq 1 ]; then
+        mv "${LANE}.c1.pack" "${LANE}.pack"
+    else
+        packs=()
+        for i in $(seq 1 "$CHUNKS"); do
+            packs+=( -i "${LANE}.c${i}.pack" )
+        done
+        vg pack -x "$GBZ" "${packs[@]}" -o "${LANE}.pack" -t "$THREADS"
+    fi
+    [ -s "${LANE}.pack" ] || { echo "giraffe-sharded.sh: no pack produced for ${LANE}" >&2; exit 1; }
+fi
+
 for i in $(seq 1 "$CHUNKS"); do
-    rm -f "${LANE}.c${i}.bam" "${LANE}.c${i}.gam"
+    rm -f "${LANE}.c${i}.bam" "${LANE}.c${i}.gam" "${LANE}.c${i}.pack"
 done
 rm -rf shards
 

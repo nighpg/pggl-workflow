@@ -117,6 +117,20 @@ inputs:
     doc: Number of parallel vg giraffe processes per lane. The lane FASTQ pair is sharded into this many read-pair blocks (pairs never split), mapped in parallel with threads/chunks threads each, and the per-block BAMs are concatenated with samtools cat. Alignment results are identical to a single process (only lane BAM record order changes); total memory use stays ~constant while the per-process peak drops. Set 1 for the original single-process behaviour.
     default: 1
 
+  call_sv:
+    type: boolean
+    doc: Genotype the structural variants that are embedded in the pangenome graph (vg pack + vg call) and emit <prefix>.sv.vcf.gz. This only genotypes variation present in the graph; vg cannot discover novel SVs, so novel events still need a linear caller on <prefix>.bam. Off by default because it adds a vg pack process per alignment block.
+    default: false
+
+  snarls:
+    type: File?
+    doc: Precomputed snarls for the graph (vg snarls). Optional, but on whole-genome graphs recomputing them inside every run is expensive, so generate them once alongside the giraffe indexes. Ignored when call_sv is false.
+
+  sv_min_length:
+    type: int
+    doc: Minimum traversal length for a graph site to be genotyped as an SV (vg call -c). 50 matches the usual SV definition; lower it to also emit smaller graph variants.
+    default: 50
+
 steps:
   lane_from_rg:
     run: ../Tools/lane-from-rg.cwl
@@ -124,6 +138,7 @@ steps:
       rg: combine_lanes/rg
     out:
       - lane_names
+      - sample_name
 
   cram_to_fastq:
     run: ../Tools/samtools-cram-to-fastq.cwl
@@ -168,11 +183,45 @@ steps:
       lane: lane_from_rg/lane_names
       emit_gam: emit_gam
       chunks: align_chunks
+      call_sv: call_sv
     scatter: [fq1, fq2, read_group, lane]
     scatterMethod: dotproduct
     out:
       - bam
       - gam
+      - pack
+
+  pick_pack:
+    run: ../Tools/pick-pack.cwl
+    in:
+      pack_in: giraffe/pack
+    out:
+      - packs
+
+  merge_packs:
+    run: ../Tools/vg-pack.cwl
+    in:
+      gbz: gbz
+      packs: pick_pack/packs
+      prefix: prefix
+      threads: threads
+    out:
+      - pack
+
+  call_sv_step:
+    run: ../Tools/vg-call-sv.cwl
+    in:
+      gbz: gbz
+      pack: merge_packs/pack
+      ref_paths: ref_paths
+      snarls: snarls
+      prefix: prefix
+      sample: lane_from_rg/sample_name
+      threads: threads
+      min_length: sv_min_length
+      ref_path_prefix: ref_path_prefix
+    out:
+      - sv_vcf
 
   pick_gam:
     run: ../Tools/pick-gam.cwl
@@ -327,6 +376,13 @@ outputs:
     type: File[]?
     doc: Per-lane graph-space alignment in GAM format (kept when emit_gam is true)
     outputSource: pick_gam/gam
+
+  sv_vcf:
+    type: File?
+    doc: Structural variants of the pangenome graph genotyped for this sample, in reference coordinates (produced when call_sv is true)
+    outputSource: call_sv_step/sv_vcf
+    secondaryFiles:
+      - .tbi
 
   markdup_metrics:
     type: File

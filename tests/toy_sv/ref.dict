@@ -1,0 +1,4 @@
+@HD	VN:1.0	SO:unsorted
+@SQ	SN:chr20	LN:2500	M5:79327bbb8843abfde0e4236bdb4d9058	UR:file:///tmp/opencode/toy/ref.fa
+@SQ	SN:chrX	LN:2000	M5:e189c6089de3566b122c73cb8e3723eb	UR:file:///tmp/opencode/toy/ref.fa
+@SQ	SN:chrY	LN:1800	M5:e832b090326a19d05781f9daff1354af	UR:file:///tmp/opencode/toy/ref.fa
