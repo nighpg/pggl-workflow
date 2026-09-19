@@ -1,0 +1,41 @@
+# Toy-demo runtime: everything the CWL workflows need on $PATH, so cwltool can
+# run with --no-container, exactly the way the Singularity images run it.
+# Mirrors sif-build.def as a Dockerfile, so the demo runs on any host with
+# Docker (incl. Apple Silicon, via linux/amd64 emulation).
+#
+# The DeepVariant image already ships run_deepvariant and samtools/bcftools
+# (1.15.1, htslib 1.21) under /opt/conda/envs/bio/bin, so only vg, bamsormadup,
+# node and cwltool have to be added.
+FROM --platform=linux/amd64 google/deepvariant:1.10.0
+
+ARG VG_VERSION=v1.70.0
+ENV DEBIAN_FRONTEND=noninteractive
+
+# bamsormadup (biobambam2) for the markdup stage; node for cwltool inline JS.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        biobambam2 nodejs curl ca-certificates python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# vg: static linux x86_64 release binary
+RUN curl -fsSL -o /usr/local/bin/vg \
+        "https://github.com/vgteam/vg/releases/download/${VG_VERSION}/vg" \
+    && chmod +x /usr/local/bin/vg \
+    && vg version
+
+# cwltool lives in its own venv so its dependency set can never disturb the
+# DeepVariant/TensorFlow python environment. Only the entry point is exposed;
+# the venv's bin/ deliberately stays off PATH so run_deepvariant keeps using
+# the system python.
+RUN python3 -m venv /opt/cwltool-venv \
+    && /opt/cwltool-venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/cwltool-venv/bin/pip install --no-cache-dir cwltool \
+    && ln -s /opt/cwltool-venv/bin/cwltool /usr/local/bin/cwltool \
+    && cwltool --version
+
+ENV PATH=/usr/local/bin:/opt/deepvariant/bin:/opt/conda/envs/bio/bin:$PATH \
+    TF_USE_LEGACY_KERAS=1 \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8
+
+WORKDIR /work
