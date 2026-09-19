@@ -10,6 +10,7 @@
 #   <prefix>      output prefix; generated files are:
 #                   <prefix>.ref_paths.txt
 #                   <prefix>.dist / <prefix>.min / <prefix>.zipcodes
+#                   <prefix>.snarls  (only needed for call_sv, see SKIP_SNARLS)
 #   [ref_sample]  PanSN sample name of the reference paths (default: GRCh38, or
 #                 auto-detected when the graph has no full-length GRCh38 paths,
 #                 e.g. T2T-CHM13 backbone graphs such as JaSaPaGe)
@@ -19,6 +20,9 @@
 # Environment:
 #   SKIP_AUTOINDEX=1  skip `vg autoindex` and require <prefix>.dist/.min/.zipcodes
 #                     to already exist (HPRC ships them)
+#   SKIP_SNARLS=1     skip `vg snarls`; the snarls file is only consumed by the
+#                     workflows' call_sv (SV genotyping) track, and computing it
+#                     on a whole-genome graph is expensive
 #   THREADS=N          threads for autoindex (default: all cores)
 set -euo pipefail
 
@@ -143,4 +147,17 @@ fi
 for f in "dist" "min" "zipcodes"; do
   [ -f "${PREFIX}.$f" ] || { echo "error: ${PREFIX}.$f missing" >&2; exit 1; }
 done
-echo "done: ${PREFIX}.ref_paths.txt ${PREFIX}.dist ${PREFIX}.min ${PREFIX}.zipcodes"
+
+# Snarls are consumed only by the SV genotyping track (call_sv). Computing them
+# once here keeps vg call from recomputing them on every workflow run.
+SNARLS_OUT=
+if [ "${SKIP_SNARLS:-0}" = "1" ]; then
+  echo "  SKIP_SNARLS=1: not building ${PREFIX}.snarls (needed only for call_sv)"
+else
+  echo "[extra] building snarls for SV genotyping (SKIP_SNARLS=1 to skip)"
+  vg snarls -t "$THREADS" "$GRAPH" > "${PREFIX}.snarls"
+  [ -s "${PREFIX}.snarls" ] || { echo "error: ${PREFIX}.snarls is empty" >&2; exit 1; }
+  SNARLS_OUT=" ${PREFIX}.snarls"
+fi
+
+echo "done: ${PREFIX}.ref_paths.txt ${PREFIX}.dist ${PREFIX}.min ${PREFIX}.zipcodes${SNARLS_OUT}"

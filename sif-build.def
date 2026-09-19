@@ -75,6 +75,8 @@ From: image/deepvariant-opencode-cpu.sif
     test -f /opt/pangenome/Workflows/germline-pangenome-cpu.cwl
     test -f /opt/pangenome/Tools/bamsormadup-to-markdup-bam.cwl
     test -f /opt/pangenome/scripts/bamsormadup-to-markdup-bam.sh
+    test -f /opt/pangenome/Tools/vg-call-sv.cwl
+    test -f /opt/pangenome/scripts/vg-call-sv.sh
     test -f /opt/pangenome/interval_files/chm13_t2t/autosome.bed
     test -f /opt/pangenome/tools/filter_fastq.py
 

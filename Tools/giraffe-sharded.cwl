@@ -106,9 +106,16 @@ inputs:
     inputBinding:
       position: 13
 
+  call_sv:
+    type: boolean?
+    doc: Also build the vg pack read support needed to genotype the graph's SVs. The pack is produced from the same one-pass GAM stream (no GAM is written to disk), but each block runs its own vg pack process, so peak memory grows with chunks.
+    default: false
+
 arguments:
   - position: 12
     valueFrom: '$(inputs.emit_gam ? "true" : "false")'
+  - position: 14
+    valueFrom: '$(inputs.call_sv ? "true" : "false")'
 
 outputs:
   bam:
@@ -122,3 +129,9 @@ outputs:
     doc: Per-lane graph-space alignment in GAM format (kept only when emit_gam is set)
     outputBinding:
       glob: $(inputs.lane).gam
+
+  pack:
+    type: File?
+    doc: Per-lane read support for vg call (produced only when call_sv is set)
+    outputBinding:
+      glob: $(inputs.lane).pack
