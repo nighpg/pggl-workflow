@@ -2,3 +2,10 @@
 sif-stage/
 image/
 *.sif
+# offline bundle (created by scripts/fetch-offline-bundle.sh)
+offline-bundle/
+pggl-offline-bundle-*.tar
+pggl-offline-bundle-*.tar.sha256
+pggl-offline-bundle-*.tar.part-*
+tool-images/
+.offline-build/
