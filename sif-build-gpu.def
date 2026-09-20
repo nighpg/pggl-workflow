@@ -43,7 +43,7 @@ From: google/deepvariant:1.10.0-gpu
     scripts /opt/pangenome/scripts
     tools /opt/pangenome/tools
     interval_files /opt/pangenome/interval_files
-    image/opencode-linux-x64-baseline.tar.gz /opt/opencode.tar.gz
+    image/opencode /opt/opencode-stage
 
 %post
     set -eux
@@ -51,7 +51,6 @@ From: google/deepvariant:1.10.0-gpu
     test -s /usr/local/bin/vg
     test -s /usr/local/node-v20.18.0-linux-x64/bin/node
     test -n "$(ls /opt/cwltool-wheels)"
-    test -s /opt/opencode.tar.gz
 
     # bamsormadup (biobambam2) for the markdup stage. Its jammy shared libs
     # (libmaus2*, libgpgme, libnettle) ship in /opt/biobambam2/lib; the wrapper
@@ -73,16 +72,22 @@ From: google/deepvariant:1.10.0-gpu
     test -x /opt/deepvariant/bin/run_deepvariant
     test -f /opt/pangenome/tools/filter_fastq.py
 
-    # opencode: offline from the baseline tarball (the official curl installer
-    # downloads a build that needs glibc >= 2.34; the DeepVariant image is
-    # Ubuntu 20.04 / glibc 2.31, so the *baseline* binary is the right one)
-    mkdir -p /tmp/opencode-install
-    tar -xzf /opt/opencode.tar.gz -C /tmp/opencode-install
-    test -s /tmp/opencode-install/opencode
-    install -m 0755 /tmp/opencode-install/opencode /usr/local/bin/opencode
-    rm -rf /tmp/opencode-install /opt/opencode.tar.gz
-    command -v opencode
-    opencode --version
+    # opencode (OPTIONAL dev tool, not used by the pipeline): installed offline
+    # from the baseline tarball when scripts/stage-sif-assets.sh found one in
+    # image/opencode/.  The official curl installer downloads a build that needs
+    # glibc >= 2.34, so the *baseline* binary is the right one here.
+    if [ -s /opt/opencode-stage/opencode-linux-x64-baseline.tar.gz ]; then
+        mkdir -p /tmp/opencode-install
+        tar -xzf /opt/opencode-stage/opencode-linux-x64-baseline.tar.gz -C /tmp/opencode-install
+        test -s /tmp/opencode-install/opencode
+        install -m 0755 /tmp/opencode-install/opencode /usr/local/bin/opencode
+        rm -rf /tmp/opencode-install
+        command -v opencode
+        opencode --version
+    else
+        echo "opencode tarball not staged - building without it (optional)"
+    fi
+    rm -rf /opt/opencode-stage
 
     cat > /opt/pangenome/run-pangenome-gpu.sh <<'LAUNCHER'
 #!/bin/bash
@@ -117,7 +122,7 @@ WRAP
     exec "$@"
 
 %test
-    command -v vg cwltool node run_deepvariant opencode bamsormadup
+    command -v vg cwltool node run_deepvariant bamsormadup
     test -x /opt/biobambam2/bin/bamsormadup
     ! LD_LIBRARY_PATH=/opt/biobambam2/lib ldd /opt/biobambam2/bin/bamsormadup | grep -q 'not found'
     cwltool --validate --no-container \
@@ -125,12 +130,13 @@ WRAP
     test -x /opt/pangenome/run-pangenome-gpu.sh
     test -f /opt/pangenome/tools/filter_fastq.py
 
-    opencode --version
-
-    export HOME=/tmp/opencode-test-home
-    export XDG_CONFIG_HOME="${HOME}/.config"
-    export XDG_CACHE_HOME="${HOME}/.cache"
-    export XDG_DATA_HOME="${HOME}/.local/share"
-    export XDG_STATE_HOME="${HOME}/.local/state"
-    mkdir -p "${XDG_CONFIG_HOME}" "${XDG_CACHE_HOME}" "${XDG_DATA_HOME}" "${XDG_STATE_HOME}"
-    opencode --version
+    # opencode is optional (see %post); only exercised when it was staged.
+    if command -v opencode >/dev/null; then
+        export HOME=/tmp/opencode-test-home
+        export XDG_CONFIG_HOME="${HOME}/.config"
+        export XDG_CACHE_HOME="${HOME}/.cache"
+        export XDG_DATA_HOME="${HOME}/.local/share"
+        export XDG_STATE_HOME="${HOME}/.local/state"
+        mkdir -p "${XDG_CONFIG_HOME}" "${XDG_CACHE_HOME}" "${XDG_DATA_HOME}" "${XDG_STATE_HOME}"
+        opencode --version
+    fi

@@ -231,6 +231,10 @@ singularity exec deepvariant-opencode-cpu-vg.sif \
   --prefix SAMPLE --outdir out/
 ```
 
+(For an air-gapped target host, build the SIF on an online host with
+`./scripts/fetch-offline-bundle.sh` and install it with
+`./scripts/setup-offline.sh`; see *Offline (air-gapped) setup* below.)
+
 Build notes: singularity is required on the build host (not installable inside
 the base image). Before building, run `./scripts/stage-sif-assets.sh` once:
 it creates `sif-stage/` (vg, node, cwltool wheels, `biobambam2/`) and `image/`
@@ -282,6 +286,34 @@ Verified on a host with V100S GPUs (driver 550.x, devices `/dev/nvidia0`,
 `/dev/nvidia1`). The image's `%test` validates `germline-pangenome-gpu.cwl`
 with `cwltool --validate` at build time. The CPU SIF (`sif-build.def`) remains
 the portable fallback for hosts without a GPU.
+
+## Offline (air-gapped) setup
+
+The pipeline never needs the network at run time — only fetching the apptainer
+image and its build inputs does. Two scripts split along that line, see
+`docs/OFFLINE.md` for the full procedure:
+
+```bash
+# on an ONLINE host: collect image + build inputs + repo snapshot into one bundle
+./scripts/fetch-offline-bundle.sh --archive          # (--gpu for the GPU image too)
+#   -> offline-bundle/ and pggl-offline-bundle-<date>.tar (+ .sha256)
+
+# carry the tar over, then on the OFFLINE host:
+./scripts/setup-offline.sh --bundle offline-bundle --verify
+#   verifies the checksums, installs (or builds) deepvariant-opencode-cpu-vg.sif,
+#   validates the workflow inside the image and runs the toy demo
+```
+
+The bundle carries the ready-to-run SIF when the online host has
+apptainer/singularity (`--no-build`/`--with-base` ship the base images plus
+`sif-stage/` instead, so the offline host can build them itself), and
+`--tool-images` adds the per-tool SIFs for `cwltool --singularity`.
+`scripts/stage-sif-assets.sh` accepts `PGGL_SRC=<unpacked bundle>` and
+`PGGL_OFFLINE=1` (fail fast instead of downloading).
+
+**Not** in the bundle: the pangenome graph, its giraffe indexes and the linear
+reference (~54 GB) — copy those separately; the index preparation itself runs
+offline from the image (`apptainer exec ... prepare_pangenome_indexes.sh`).
 
 ## Toy demo (self-contained)
 
