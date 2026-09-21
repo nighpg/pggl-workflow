@@ -161,22 +161,6 @@ else
     echo "    staged ($(uname -s) host: not executed)"
 fi
 
-echo "==> cwltool wheels (${CWLTOOL_VERSION})"
-if [ -z "$(ls -A sif-stage/wheels)" ]; then
-    if [ -n "$(ls -A "${SRC}/sif-stage/wheels" 2>/dev/null)" ]; then
-        cp "${SRC}/sif-stage/wheels/"*.whl sif-stage/wheels/
-    else
-        need_network "the cwltool ${CWLTOOL_VERSION} wheels"
-        # linux/cp310 wheels: the SIF base (DeepVariant 1.10) is Ubuntu 22.04.
-        python3 -m pip download --dest sif-stage/wheels --only-binary=:all: \
-            --python-version 3.10 --implementation cp --abi cp310 \
-            --platform manylinux2014_x86_64 --platform manylinux_2_17_x86_64 \
-            --platform manylinux_2_28_x86_64 \
-            "cwltool==${CWLTOOL_VERSION}"
-    fi
-fi
-echo "    wheels: $(ls sif-stage/wheels | wc -l)"
-
 echo "==> CPU base SIF (localimage bootstrap)"
 if [ "${PGGL_SKIP_BASE_SIF:-0}" = 1 ] && [ ! -s image/deepvariant-opencode-cpu.sif ]; then
     echo "    skipped (PGGL_SKIP_BASE_SIF=1); the SIF cannot be built without it"
@@ -208,6 +192,41 @@ fi
 if [ -s image/deepvariant-opencode-cpu.sif ]; then
     echo "    image/deepvariant-opencode-cpu.sif ($(du -h image/deepvariant-opencode-cpu.sif | cut -f1))"
 fi
+
+echo "==> cwltool wheels (${CWLTOOL_VERSION})"
+if [ -z "$(ls -A sif-stage/wheels)" ]; then
+    if [ -n "$(ls -A "${SRC}/sif-stage/wheels" 2>/dev/null)" ]; then
+        cp "${SRC}/sif-stage/wheels/"*.whl sif-stage/wheels/
+    else
+        need_network "the cwltool ${CWLTOOL_VERSION} wheels"
+        # The wheel set has to resolve for the interpreter that %post installs
+        # it with -- python 3.10 in the DeepVariant/Ubuntu 22.04 base -- not for
+        # the staging host's.  `pip download --python-version` only steers wheel
+        # *tag* selection; environment markers are still evaluated against the
+        # running interpreter, so on a host with python >= 3.11 a dependency
+        # like rdflib's `isodate; python_version < "3.11"` is silently left out
+        # and `pip install --no-index` then fails inside the build.  Resolving
+        # in the base image (staged just above) is exact, so it is preferred.
+        APPTAINER="$(apptainer_bin)"
+        if [ -n "${APPTAINER}" ] && [ -s image/deepvariant-opencode-cpu.sif ]; then
+            echo "    resolving inside the base image (its own python 3.10)"
+            "${APPTAINER}" exec --cleanenv --bind "${PWD}:/repo" \
+                image/deepvariant-opencode-cpu.sif \
+                python3 -m pip download --dest /repo/sif-stage/wheels \
+                    --only-binary=:all: "cwltool==${CWLTOOL_VERSION}"
+        else
+            echo "    WARNING: no base image available to resolve in; falling back"
+            echo "             to the host $(python3 -V 2>&1).  On anything but"
+            echo "             python 3.10 this can miss marker-gated dependencies."
+            python3 -m pip download --dest sif-stage/wheels --only-binary=:all: \
+                --python-version 3.10 --implementation cp --abi cp310 \
+                --platform manylinux2014_x86_64 --platform manylinux_2_17_x86_64 \
+                --platform manylinux_2_28_x86_64 \
+                "cwltool==${CWLTOOL_VERSION}"
+        fi
+    fi
+fi
+echo "    wheels: $(ls sif-stage/wheels | wc -l)"
 
 echo "==> opencode baseline tarball (GPU SIF, optional)"
 if [ ! -s image/opencode/opencode-linux-x64-baseline.tar.gz ]; then
