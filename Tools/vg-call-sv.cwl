@@ -34,7 +34,7 @@ inputs:
 
   ref_paths:
     type: File?
-    doc: Ordered reference path names, one per line (the same file the aligner uses). The VCF ##contig block is emitted in this order so it matches the BAM @SQ order.
+    doc: Ordered reference paths, as one path name per line or an HTSlib sequence dictionary (the same file the aligner uses). The VCF ##contig block is emitted in this order so it matches the BAM @SQ order; subrange entries are folded onto their parent contig.
 
   snarls:
     type: File?

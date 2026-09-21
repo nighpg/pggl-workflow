@@ -410,6 +410,19 @@ Notes and limits:
   BEDs. The `##contig` block is also re-emitted in `ref_paths` order — i.e. the
   BAM `@SQ` order — because `bcftools sort` orders records by the header and
   tools that compare sequence dictionaries (GATK) reject a mismatched order.
+  `ref_paths` may be either a plain path list or an HTSlib `.dict`; both are
+  read here, and subrange entries (`chr1[585988]`) are folded onto the parent
+  contig the VCF names.
+- **Multi-reference graphs.** `vg call` genotypes *every* reference assembly in
+  the graph by default (the default for `-p` is "all"), so a graph carrying more
+  than one — e.g. JaSaPaGe, whose GBWT `reference_samples` tag is
+  `CHM13v2 GRCh38` — would produce a VCF mixing the contigs of both and no
+  longer matching the BAM. The workflow therefore passes `vg call -S <sample>`,
+  taking the sample from `ref_path_prefix` (`GRCh38#0#` → `GRCh38`). An empty
+  `ref_path_prefix` means plain contig names, i.e. a single-reference graph,
+  where the default is already right and no `-S` is added.
+  Should a subpath contig nevertheless reach the VCF, the run fails rather than
+  emit fragment-relative positions that silently disagree with the BAM.
 
 A self-contained toy fixture lives in `tests/toy_sv/` (a 200 bp deletion, a
 150 bp insertion and a 120 bp deletion, all heterozygous):
@@ -417,6 +430,10 @@ A self-contained toy fixture lives in `tests/toy_sv/` (a 200 bp deletion, a
 ```bash
 cwltool --no-container --outdir tests/toy_sv/demo_out \
   Workflows/germline-pangenome-cpu.cwl tests/toy_sv/jobs/toy_sv_job.json
+
+# same fixture, but ref_paths given as an HTSlib .dict instead of a path list
+cwltool --no-container --outdir tests/toy_sv/demo_out \
+  Workflows/germline-pangenome-cpu.cwl tests/toy_sv/jobs/toy_sv_dict_job.json
 ```
 
 ## Parallelisation

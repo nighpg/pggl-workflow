@@ -25,6 +25,11 @@
 # same order as the BAM @SQ: bcftools sort orders records by the header, and
 # tools that compare sequence dictionaries (GATK) reject a mismatched order.
 #
+# ref_paths is read in either of the two forms vg accepts for --ref-paths / -F:
+# one path name per line, or an HTSlib sequence dictionary. The dictionary form
+# is what a graph whose reference is stored as PanSN subranges needs, and both
+# are mapped onto the parent contig names the VCF uses.
+#
 # Produces no output when no pack is given, which is how the workflow expresses
 # call_sv=false (cwlVersion v1.1 has no conditional steps).
 #
@@ -81,6 +86,17 @@ CALL_ARGS=(
 )
 [ -n "$SNARLS" ] && CALL_ARGS+=( -r "$SNARLS" )
 
+# `vg call` genotypes *every* reference assembly in the graph by default (the
+# default for -p is "all"), so on a graph that carries more than one -- e.g.
+# JaSaPaGe, whose GBWT reference_samples tag is "CHM13v2 GRCh38" -- the VCF
+# comes out with the contigs of both assemblies mixed together and no longer
+# matches the BAM and the gVCFs. ref_path_prefix is the PanSN
+# <sample>#<haplotype># of the assembly this run surjects onto, so its sample
+# field selects the matching one. An empty prefix means plain contig names,
+# i.e. a single-reference graph, where the default is already right.
+REF_SAMPLE=${REF_PATH_PREFIX%%#*}
+[ -n "$REF_SAMPLE" ] && CALL_ARGS+=( -S "$REF_SAMPLE" )
+
 vg call "${CALL_ARGS[@]}" > raw.vcf
 
 # Strip the PanSN prefix from the ##contig headers and, defensively, from the
@@ -90,6 +106,18 @@ awk -v p="$REF_PATH_PREFIX" -v refpaths="$REF_PATHS" '
   function strip(s) {
     return (n > 0 && substr(s, 1, n) == p) ? substr(s, n + 1) : s
   }
+  # vg is expected to report subrange paths against their parent contig, as
+  # `vg surject` does. Should a name reach the VCF with the subrange marker
+  # still on it, its POS is relative to the fragment rather than to the contig,
+  # so the file would silently disagree with the BAM: fail instead of guessing.
+  function check_subrange(id) {
+    if (id ~ /\[[0-9]+\]$/) {
+      print "vg-call-sv.sh: vg call emitted the subpath contig \"" id \
+            "\"; its positions are fragment-relative and cannot be" \
+            " reconciled with the BAM." > "/dev/stderr"
+      exit 3
+    }
+  }
   BEGIN {
     FS = OFS = "\t"
     n = length(p)
@@ -98,7 +126,29 @@ awk -v p="$REF_PATH_PREFIX" -v refpaths="$REF_PATHS" '
       while ((getline line < refpaths) > 0) {
         sub(/\r$/, "", line)
         if (line == "") continue
-        order[++norder] = strip(line)
+        # Both forms vg itself accepts for --ref-paths / -F are read here: one
+        # path name per line, or an HTSlib sequence dictionary. The dictionary
+        # is the only way to surject onto a reference whose paths are stored as
+        # PanSN subranges (chr1[585988]), because vg then takes the contig
+        # names and lengths from the header instead of from the split paths.
+        if (substr(line, 1, 1) == "@") {
+          if (substr(line, 1, 3) != "@SQ") continue
+          name = ""
+          nf = split(line, fld, "\t")
+          for (i = 2; i <= nf; i++) {
+            if (substr(fld[i], 1, 3) == "SN:") { name = substr(fld[i], 4); break }
+          }
+          if (name == "") continue
+        } else {
+          name = line
+        }
+        id = strip(name)
+        # A subrange path belongs to its parent contig, which is the name the
+        # VCF carries, so several entries can collapse onto one contig.
+        sub(/\[[0-9]+\]$/, "", id)
+        if (id in ordered) continue
+        ordered[id] = 1
+        order[++norder] = id
       }
       close(refpaths)
     }
@@ -109,6 +159,7 @@ awk -v p="$REF_PATH_PREFIX" -v refpaths="$REF_PATHS" '
     raw_id = rest
     sub(/[,>].*$/, "", raw_id)
     id = strip(raw_id)
+    check_subrange(id)
     contig[id] = "##contig=<ID=" id substr(rest, length(raw_id) + 1)
     if (!(id in seen)) { seen[id] = 1; extra[++nextra] = id }
     next
@@ -125,7 +176,7 @@ awk -v p="$REF_PATH_PREFIX" -v refpaths="$REF_PATHS" '
     next
   }
   /^#/ { print; next }
-  { $1 = strip($1); print }
+  { $1 = strip($1); check_subrange($1); print }
 ' raw.vcf > fixed.vcf
 
 OUT="${PREFIX}.sv.vcf.gz"
