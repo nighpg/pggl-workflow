@@ -24,6 +24,13 @@
 #                     workflows' call_sv (SV genotyping) track, and computing it
 #                     on a whole-genome graph is expensive
 #   THREADS=N          threads for autoindex (default: all cores)
+#   TMPDIR=DIR         directory for the intermediates vg autoindex spills
+#                      (vg autoindex -T). On a cluster the default /tmp is
+#                      usually a small node-local disk, far too small for a
+#                      whole-genome graph, so point this at shared storage.
+#   TARGET_MEM=SIZE    memory budget for vg autoindex (-M, e.g. 150G). vg
+#                      defaults to half of what it sees on the machine, which
+#                      ignores the cgroup limit of a batch job.
 set -euo pipefail
 
 GRAPH=${1:?usage: prepare_pangenome_indexes.sh <graph.gbz> <prefix> [ref_sample] [linear.fa]}
@@ -135,7 +142,10 @@ echo "[3/3] building giraffe indexes"
 if [ "${SKIP_AUTOINDEX:-0}" = "1" ]; then
   echo "  SKIP_AUTOINDEX=1: expecting ${PREFIX}.dist, ${PREFIX}.min, ${PREFIX}.zipcodes"
 else
-  vg autoindex -p "$PREFIX" -G "$GRAPH" -w giraffe -t "$THREADS"
+  AUTOINDEX_ARGS=( -p "$PREFIX" -G "$GRAPH" -w giraffe -t "$THREADS" )
+  [ -n "${TMPDIR:-}" ] && AUTOINDEX_ARGS+=( -T "$TMPDIR" )
+  [ -n "${TARGET_MEM:-}" ] && AUTOINDEX_ARGS+=( -M "$TARGET_MEM" )
+  vg autoindex "${AUTOINDEX_ARGS[@]}"
   if [ ! -f "${PREFIX}.min" ] && [ -f "${PREFIX}.shortread.withzip.min" ]; then
     ln -s "${PREFIX}.shortread.withzip.min" "${PREFIX}.min"
   fi
