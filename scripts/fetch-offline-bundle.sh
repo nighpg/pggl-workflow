@@ -82,6 +82,21 @@ while [ $# -gt 0 ]; do
 done
 
 APPTAINER="$(command -v apptainer 2>/dev/null || command -v singularity 2>/dev/null || true)"
+
+# A def-file build runs %post as root, which apptainer escalates to on its own.
+# Without an /etc/subuid entry it falls back to a root-mapped user namespace and
+# injects its own libfakeroot; that library is linked against a newer glibc than
+# the DeepVariant base (Ubuntu 22.04, glibc 2.35) provides, so %post dies with
+#   /bin/sh: .../libc.so.6: version `GLIBC_2.38' not found
+# The root-mapped namespace on its own is all these %post sections need -- they
+# only copy files and pip-install -- so tell apptainer to skip the fakeroot
+# command in that case. singularity-ce has no such flag, hence the probe.
+DEF_BUILD_ARGS=()
+if [ -n "${APPTAINER}" ] \
+   && ! grep -q "^$(id -un):" /etc/subuid 2>/dev/null \
+   && "${APPTAINER}" build --ignore-fakeroot-command --help >/dev/null 2>&1; then
+    DEF_BUILD_ARGS+=( --ignore-fakeroot-command )
+fi
 DOCKER="$(command -v docker 2>/dev/null || true)"
 
 if [ -z "${APPTAINER}" ] && [ -z "${DOCKER}" ]; then
@@ -169,7 +184,8 @@ echo "==> [3/6] runnable workflow images"
 if [ "${WANT_BUILD}" = 1 ]; then
     if [ ! -s "${OUTDIR}/sif/${CPU_SIF}" ]; then
         echo "    building ${CPU_SIF} (this takes a few minutes)"
-        "${APPTAINER}" build "${OUTDIR}/sif/${CPU_SIF}" "${REPO}/sif-build.def"
+        "${APPTAINER}" build ${DEF_BUILD_ARGS[@]+"${DEF_BUILD_ARGS[@]}"} \
+            "${OUTDIR}/sif/${CPU_SIF}" "${REPO}/sif-build.def"
     fi
     echo "    sif/${CPU_SIF} ($(hsize "${OUTDIR}/sif/${CPU_SIF}"))"
     if [ "${WANT_GPU}" = 1 ]; then
@@ -190,7 +206,8 @@ if [ "${WANT_BUILD}" = 1 ]; then
             else
                 echo "    building ${GPU_SIF}"
             fi
-            "${APPTAINER}" build "${OUTDIR}/sif/${GPU_SIF}" "${gpu_def}"
+            "${APPTAINER}" build ${DEF_BUILD_ARGS[@]+"${DEF_BUILD_ARGS[@]}"} \
+                "${OUTDIR}/sif/${GPU_SIF}" "${gpu_def}"
         fi
         echo "    sif/${GPU_SIF} ($(hsize "${OUTDIR}/sif/${GPU_SIF}"))"
     fi
