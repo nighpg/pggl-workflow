@@ -83,8 +83,53 @@ From: image/deepvariant-opencode-cpu.sif
     # launcher: runs the bundled workflow with native tools, no container layer
     cat > /opt/pangenome/run-pangenome.sh <<'LAUNCHER'
 #!/bin/bash
+# Runs the bundled workflow with the tools inside this image (no container
+# layer). cwltool only accepts its own options *before* the workflow path,
+# while workflow inputs go after it, so the runner options are hoisted out of
+# the command line here: --outdir, --parallel, --tmpdir-prefix, ... can be
+# written anywhere, including at the end as the README does
+# (`... --prefix SAMPLE --outdir out/`). Everything else is passed through to
+# the workflow untouched; `--` forces the rest to be workflow inputs.
 set -euo pipefail
-exec cwltool --no-container /opt/pangenome/Workflows/germline-pangenome-cpu.cwl "$@"
+
+WF=/opt/pangenome/Workflows/germline-pangenome-cpu.cwl
+RUNNER=()
+INPUTS=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --outdir|--tmpdir-prefix|--tmp-outdir-prefix|--cachedir|--log-dir|\
+        --max-ram|--max-cores|--timeout|--singularity-cache)
+            if [ "$#" -lt 2 ]; then
+                echo "$(basename "$0"): $1 needs a value" >&2
+                exit 2
+            fi
+            RUNNER+=( "$1" "$2" )
+            shift 2
+            ;;
+        --outdir=*|--tmpdir-prefix=*|--tmp-outdir-prefix=*|--cachedir=*|\
+        --log-dir=*|--max-ram=*|--max-cores=*|--timeout=*)
+            RUNNER+=( "$1" )
+            shift
+            ;;
+        -p|--parallel|--debug|--quiet|--verbose|--timestamps|--leave-tmpdir|\
+        --rm-tmpdir|--js-console|--relax-path-checks|--strict|--non-strict|\
+        --validate|--print-deps)
+            RUNNER+=( "$1" )
+            shift
+            ;;
+        --)
+            shift
+            INPUTS+=( "$@" )
+            break
+            ;;
+        *)
+            INPUTS+=( "$1" )
+            shift
+            ;;
+    esac
+done
+
+exec cwltool --no-container ${RUNNER[@]+"${RUNNER[@]}"} "$WF" ${INPUTS[@]+"${INPUTS[@]}"}
 LAUNCHER
     chmod +x /opt/pangenome/run-pangenome.sh
 
