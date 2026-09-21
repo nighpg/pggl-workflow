@@ -60,6 +60,21 @@ done
 
 APPTAINER="$(command -v apptainer 2>/dev/null || command -v singularity 2>/dev/null || true)"
 
+# A def-file build runs %post as root, which apptainer escalates to on its own.
+# Without an /etc/subuid entry it falls back to a root-mapped user namespace and
+# injects its own libfakeroot; that library is linked against a newer glibc than
+# the DeepVariant base (Ubuntu 22.04, glibc 2.35) provides, so %post dies with
+#   /bin/sh: .../libc.so.6: version `GLIBC_2.38' not found
+# The root-mapped namespace on its own is all these %post sections need -- they
+# only copy files and pip-install -- so tell apptainer to skip the fakeroot
+# command in that case. singularity-ce has no such flag, hence the probe.
+DEF_BUILD_ARGS=()
+if [ -n "${APPTAINER}" ] \
+   && ! grep -q "^$(id -un):" /etc/subuid 2>/dev/null \
+   && "${APPTAINER}" build --ignore-fakeroot-command --help >/dev/null 2>&1; then
+    DEF_BUILD_ARGS+=( --ignore-fakeroot-command )
+fi
+
 echo "==> [1/5] bundle"
 if [ -f "${BUNDLE}" ]; then
     case "${BUNDLE}" in
@@ -133,7 +148,8 @@ if [ "${need_build}" = 1 ]; then
 
     if [ -z "${installed_cpu}" ]; then
         echo "    building ${CPU_SIF}"
-        "${APPTAINER}" build "${INSTALL_DIR}/${CPU_SIF}" "${REPO}/sif-build.def"
+        "${APPTAINER}" build ${DEF_BUILD_ARGS[@]+"${DEF_BUILD_ARGS[@]}"} \
+            "${INSTALL_DIR}/${CPU_SIF}" "${REPO}/sif-build.def"
         installed_cpu="${INSTALL_DIR}/${CPU_SIF}"
     fi
 
@@ -160,7 +176,8 @@ if [ "${need_build}" = 1 ]; then
             echo "ERROR: could not rewrite the GPU bootstrap in sif-build-gpu.def" >&2
             exit 1; }
         echo "    building ${GPU_SIF} from ${boot}:${from}"
-        "${APPTAINER}" build "${INSTALL_DIR}/${GPU_SIF}" "${def}"
+        "${APPTAINER}" build ${DEF_BUILD_ARGS[@]+"${DEF_BUILD_ARGS[@]}"} \
+            "${INSTALL_DIR}/${GPU_SIF}" "${def}"
         installed_gpu="${INSTALL_DIR}/${GPU_SIF}"
     fi
 fi
