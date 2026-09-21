@@ -95,6 +95,38 @@ backbone:
   `62,122,809-62,460,029`), so chrX carries the callable PAR: chrX `0-2,458,320`
   and `153,922,346-154,259,566` (`interval_files/chm13_t2t/PAR.bed`).
 
+### Surjecting onto a reference the graph only holds in fragments
+
+A Minigraph-Cactus graph clips its non-reference assemblies, so an assembly
+that is *not* the backbone survives only as PanSN subranges. In JaSaPaGe the
+GBWT `reference_samples` tag is `CHM13v2 GRCh38`, but GRCh38 is 165 fragments
+(`GRCh38#0#chr1[585988]`) plus a whole `chrM`, against CHM13v2's 25 full-length
+paths. A plain list of those fragment names is *not* usable as `ref_paths`: vg
+drops them from the `@SQ` header and the reads come out unmapped.
+
+Pass an **HTSlib sequence dictionary named in PanSN** instead. `vg` resolves
+each fragment to its parent contig (`Output coordinates will be in
+GRCh38#0#chr1 instead`) and takes the contig lengths from the header, so the
+BAM gets the real GRCh38 lengths and, after `ref_path_prefix` stripping, lines
+up with `interval_files/` and the linear FASTA:
+
+```bash
+awk 'BEGIN{OFS="\t"} $1 ~ /^chr([0-9]+|X|Y|M)$/ {print "@SQ","SN:GRCh38#0#"$1,"LN:"$2}' \
+    GRCh38.fa.fai | cat <(echo -e "@HD\tVN:1.6\tSO:unsorted") - > GRCh38.pansn.dict
+#  -> workflow inputs: ref_paths=GRCh38.pansn.dict  ref_path_prefix=GRCh38#0#
+```
+
+`prepare_pangenome_indexes.sh` cannot produce this: it keeps only full-length
+paths, so on such a graph it picks the wrong sample (or stops with "only N
+full-length paths"). Build the dictionary as above and run `vg autoindex`
+directly.
+
+**What is lost.** Only what is in the graph can be called. JaSaPaGe holds 92.4%
+of GRCh38 by length but **97.6% of its non-N bases** — the ~70 Mb that was
+clipped is centromeric/satellite sequence. Per contig the lowest non-N coverage
+is chr21 89.8%, chrY 91.2%, chr18 93.2%, chr9 94.2%. The CHM13v2 backbone is
+complete, so this is the price of staying in GRCh38 coordinates.
+
 ## Behind the scenes (design notes)
 
 - **Contig names**: giraffe writes full PanSN path names (`GRCh38#0#chr1`) into `@SQ`. The workflows strip the prefix on the header only (`samtools reheader -c 'sed ...'`), so the output BAM/CRAM matches `Homo_sapiens_assembly38.fasta` and existing interval BEDs.
@@ -157,6 +189,26 @@ jobs at once, peak CPU is `--threads` × the number of concurrent jobs: size
 `--threads` to the node's core count (e.g. 64 on a 64-core box) and raise
 `align_chunks` only while the node has the memory (each block is a separate
 process that reloads the whole graph, see *Parallelisation* below).
+
+**But `--parallel` breaks once a sample has many lanes.** cwltool then hands
+two scattered `giraffe` jobs the same temporary output directory, and the
+second one dies staging its `InitialWorkDirRequirement` file:
+
+```
+FileExistsError: [Errno 17] File exists: '.../scripts/giraffe-sharded.sh'
+                              -> '.../out_XXXXXXXX/giraffe-sharded.sh'
+bash: giraffe-sharded.sh: No such file or directory
+[job giraffe_2] exited with status: 127        -> permanentFail
+```
+
+It is a race in cwltool's own staging, not in the workflow, and `--parallel-max`
+does not avoid it (that only throttles execution; the collision happens while
+setting a job up). Two toy lanes never hit it; a 12-lane WGS sample hit it
+within three minutes. **Get the parallelism from `align_chunks` instead**: it
+forks inside a single `giraffe` job, so cwltool stays serial and the race
+cannot occur. `align_chunks` × ~(gbz + dist + min + zipcodes) has to fit in
+RAM — for the JaSaPaGe index set that is ~52 GB per block, so 2 blocks on a
+251 GB node, with `ceil(threads/2)` each.
 
 A job-order JSON can be used instead of CLI inputs, see **Toy demo** below
 (`tests/toy/jobs/`); omit the `fq1`/`fq2`/`rg` keys when using `cram`.
@@ -383,6 +435,66 @@ cwltool --no-container --outdir tests/toy/demo_out/no_bam \
   Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/toy_keep_bam_job.json
 ```
 
+## Haplotype sampling (personalized pangenome)
+
+Variants that the sample does not carry can mislead the mapper, so `vg` can cut
+the graph down to the haplotypes that match the sample's k-mers (Sirén et al.,
+*Personalized pangenome references*). Nothing in the workflow changes: build the
+personalized graph and its indexes first, then point `gbz`/`dist`/`min`/
+`zipcodes` at them. The CRAM track keeps working, because the workflow never
+asks how the graph was made.
+
+**Once per graph** (reusable for every sample):
+
+```bash
+vg autoindex -p g -G graph.gbz -w giraffe -t N -T "$TMPDIR"   # .dist/.min/.zipcodes
+vg gbwt -Z graph.gbz -r g.ri -p --num-threads N               # r-index
+vg haplotypes -d g.dist -r g.ri -H g.hapl -t N graph.gbz      # haplotype info
+```
+
+A `.hapl` shipped with a graph is often unusable: the format is versioned and
+vg 1.70 rejects version 4 with `Expected version 5 to 5, got version 4`. The vg
+wiki also says to rebuild anything made before v1.64.0. Regenerating it is
+cheap next to the distance index (see the timings below).
+
+**Per sample:**
+
+```bash
+kmc -k29 -m64 -okff -t N -hp @reads.txt sample "$TMPDIR"      # k must match the .hapl
+vg haplotypes -i g.hapl -k sample.kff -g sample.gbz \
+    --include-reference --set-reference GRCh38 --diploid-sampling graph.gbz
+vg autoindex -p sample -G sample.gbz -w giraffe -t N -T "$TMPDIR"
+```
+
+- **`--include-reference` / `--set-reference <assembly>` are mandatory here.**
+  Without them the reference paths are dropped from the sampled graph, there is
+  nothing left to surject onto and the linear-reference contract collapses.
+  With them the reference survives intact, fragments and all — verified by
+  surjecting a test read onto a sampled JaSaPaGe and getting the expected
+  GRCh38 contig, length and position.
+- **KMC cannot read CRAM** (`wrong EOF marker of BAM file`; it does not use
+  htslib). It reads BAM with `-fbam`, or FASTQ. Read groups are irrelevant to
+  k-mer counting, so all lanes are counted as one sample.
+- `--diploid-sampling` is the vg wiki's recommendation, and it wants ≥20x
+  coverage to tell heterozygous from homozygous k-mers.
+- **`call_sv` changes meaning**: only the sampled haplotypes' SVs remain, and
+  the graph's own `.snarls` no longer applies — it has to be recomputed per
+  sample.
+
+Measured on JaSaPaGe (3.3 GB GBZ, 68 samples, 52,645 paths) and a 38x sample,
+on 32 allocated CPUs (the node exposes 16 physical cores to vg):
+
+| Step | Wall | Peak RSS | Output |
+| --- | --- | --- | --- |
+| `vg autoindex -w giraffe` | 4 h 19 m | 89.6 GB | `.dist` 7.6 GB, `.min` 38 GB, `.zipcodes` 2.6 GB |
+| `vg gbwt -r` | **1 m 31 s** | 26.6 GB | `.ri` 5.4 GB |
+| `vg haplotypes -H` | **40 m 41 s** | 46.4 GB | `.hapl` 5.4 GB |
+| `kmc -k29` (767 M reads) | 27 m 56 s | 60.4 GB | `.kff` 23 GB |
+| `vg haplotypes -i -k -g` | **7 m 27 s** | 33.9 GB | personalized GBZ 2.4 GB, 538 paths |
+
+So enabling sampling on an already-indexed graph costs ~42 minutes once, and
+~35 minutes per sample before the personalized graph still has to be indexed.
+
 ## Pangenome-aware calling
 
 `Workflows/germline-pangenome-pangenome-aware-cpu.cwl` swaps the five
@@ -519,6 +631,15 @@ a 64-thread CPU box):
   roughly constant while the per-process peak drops by `align_chunks`. Example
   `--align_chunks 8` gives ~4-6x speed-up of the mapping step on top of the
   per-lane scatter.
+
+  **Memory is the binding constraint, and it is per block.** Every block holds
+  the whole index set resident: for JaSaPaGe that is ~52 GB (`min` 38 GB +
+  `dist` 7.6 GB + `gbz` 3.3 GB + `zipcodes` 2.6 GB), so a 251 GB node takes 2
+  blocks with headroom, not 8. Since `--parallel` is unusable on a many-lane
+  sample (see *Running*), `align_chunks` is also where all the mapping
+  parallelism has to come from: `align_chunks=2` with `threads` set to the core
+  count gives each block `ceil(threads/2)` and keeps the node busy while
+  cwltool runs one lane at a time.
 
 - `autosome_chunks_count` (int, default `0`): **the easy way to chunk the
   autosome.** The workflow derives the chunk BEDs itself from `autosome_interval`
