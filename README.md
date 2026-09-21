@@ -236,7 +236,13 @@ singularity exec deepvariant-opencode-cpu-vg.sif \
 `./scripts/setup-offline.sh`; see *Offline (air-gapped) setup* below.)
 
 Build notes: singularity is required on the build host (not installable inside
-the base image). Before building, run `./scripts/stage-sif-assets.sh` once:
+the base image). On a shared host where you are not root and have no
+`/etc/subuid` entry, build unprivileged with
+`apptainer build --fakeroot --ignore-fakeroot-command ...`: apptainer then maps
+your uid to root in a user namespace, which is all `%post` needs here (the
+`--ignore-fakeroot-command` is required because the injected `faked` helper is
+not usable in that mapping).
+Before building, run `./scripts/stage-sif-assets.sh` once:
 it creates `sif-stage/` (vg, node, cwltool wheels, `biobambam2/`) and `image/`
 (the CPU base SIF for the `localimage` bootstrap + the opencode tarball) by
 copying from the working repo, falling back to the original downloads
