@@ -1,0 +1,165 @@
+# Self-contained pangenome-aware CPU environment for the germline workflow
+#
+# Same contents as sif-build.def -- vg, samtools/bcftools, biobambam2, node,
+# cwltool and the workflow tree -- but built on the pangenome-aware DeepVariant
+# image, so the five calling steps use the graph's haplotypes as extra evidence
+# (run_pangenome_aware_deepvariant). That image ships no plain run_deepvariant,
+# which is why this is a separate image and not a flag on the other one.
+#
+# The caller loads the GBZ into a /dev/shm region shared by its make_examples
+# shards, so the run node needs /dev/shm at least as large as the graph times
+# the number of calling steps running at once.
+#
+# Reference data (graph + giraffe indexes + linear ref) is NOT bundled.
+#
+# Build (stage the shared build inputs once, as for the other images):
+#   ./scripts/stage-sif-assets.sh
+#   apptainer build [--fakeroot --ignore-fakeroot-command] \
+#       deepvariant-pangenome-aware-cpu-vg.sif sif-build-pangenome-aware.def
+#
+# Run:
+#   apptainer exec deepvariant-pangenome-aware-cpu-vg.sif \
+#     /opt/pangenome/run-pangenome-aware.sh \
+#     --cram $PWD/sample.cram --ref $PWD/ref.fa --gbz $PWD/graph.gbz ... \
+#     --ref_name_pangenome CHM13v2 --outdir out/
+#
+Bootstrap: docker
+From: google/deepvariant:pangenome_aware_deepvariant-1.10.0
+
+%files
+    sif-stage/vg /usr/local/bin/vg
+    sif-stage/node /usr/local/node-v20.18.0-linux-x64
+    sif-stage/wheels /opt/cwltool-wheels
+    sif-stage/biobambam2 /opt/biobambam2
+    Workflows /opt/pangenome/Workflows
+    Tools /opt/pangenome/Tools
+    scripts /opt/pangenome/scripts
+    tools /opt/pangenome/tools
+    interval_files /opt/pangenome/interval_files
+
+%post
+    set -eux
+
+    # --- staged tool binaries must be present ---
+    test -s /usr/local/bin/vg
+    test -s /usr/local/node-v20.18.0-linux-x64/bin/node
+    test -n "$(ls /opt/cwltool-wheels)"
+
+    # bamsormadup (biobambam2) for the markdup stage; private libs in
+    # /opt/biobambam2/lib, exposed via the /usr/local/bin wrapper.
+    test -x /opt/biobambam2/bin/bamsormadup
+    test -n "$(ls -A /opt/biobambam2/lib)"
+    ! LD_LIBRARY_PATH=/opt/biobambam2/lib ldd /opt/biobambam2/bin/bamsormadup | grep -q 'not found'
+
+    # node v20.18.0 on PATH (via /usr/local/bin)
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/node /usr/local/bin/node
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/npm /usr/local/bin/npm
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/npx /usr/local/bin/npx
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/corepack /usr/local/bin/corepack
+    node --version
+
+    # cwltool, offline from the staged wheels (image python 3.10, no venv/PEP668)
+    python3 -m pip install --no-index --find-links /opt/cwltool-wheels \
+        cwltool==3.2.20260720092025
+
+    # workflow tree present (relative ../Tools, ../scripts must resolve)
+    test -f /opt/pangenome/Workflows/germline-pangenome-pangenome-aware-cpu.cwl
+    test -f /opt/pangenome/Tools/pangenome-aware-deepvariant.cwl
+    test -f /opt/pangenome/Tools/bamsormadup-to-markdup-bam.cwl
+    test -f /opt/pangenome/scripts/bamsormadup-to-markdup-bam.sh
+    test -f /opt/pangenome/Tools/vg-call-sv.cwl
+    test -f /opt/pangenome/scripts/vg-call-sv.sh
+    test -f /opt/pangenome/interval_files/chm13_t2t/autosome.bed
+    test -f /opt/pangenome/tools/filter_fastq.py
+
+    # launcher: runs the bundled workflow with native tools, no container layer
+    cat > /opt/pangenome/run-pangenome-aware.sh <<'LAUNCHER'
+#!/bin/bash
+# Runs the bundled workflow with the tools inside this image (no container
+# layer). cwltool only accepts its own options *before* the workflow path,
+# while workflow inputs go after it, so the runner options are hoisted out of
+# the command line here: --outdir, --parallel, --tmpdir-prefix, ... can be
+# written anywhere, including at the end as the README does
+# (`... --prefix SAMPLE --outdir out/`). Everything else is passed through to
+# the workflow untouched; `--` forces the rest to be workflow inputs.
+set -euo pipefail
+
+WF=/opt/pangenome/Workflows/germline-pangenome-pangenome-aware-cpu.cwl
+RUNNER=()
+INPUTS=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --outdir|--tmpdir-prefix|--tmp-outdir-prefix|--cachedir|--log-dir|\
+        --max-ram|--max-cores|--timeout|--singularity-cache)
+            if [ "$#" -lt 2 ]; then
+                echo "$(basename "$0"): $1 needs a value" >&2
+                exit 2
+            fi
+            RUNNER+=( "$1" "$2" )
+            shift 2
+            ;;
+        --outdir=*|--tmpdir-prefix=*|--tmp-outdir-prefix=*|--cachedir=*|\
+        --log-dir=*|--max-ram=*|--max-cores=*|--timeout=*)
+            RUNNER+=( "$1" )
+            shift
+            ;;
+        -p|--parallel|--debug|--quiet|--verbose|--timestamps|--leave-tmpdir|\
+        --rm-tmpdir|--js-console|--relax-path-checks|--strict|--non-strict|\
+        --validate|--print-deps)
+            RUNNER+=( "$1" )
+            shift
+            ;;
+        --)
+            shift
+            INPUTS+=( "$@" )
+            break
+            ;;
+        *)
+            INPUTS+=( "$1" )
+            shift
+            ;;
+    esac
+done
+
+exec cwltool --no-container ${RUNNER[@]+"${RUNNER[@]}"} "$WF" ${INPUTS[@]+"${INPUTS[@]}"}
+LAUNCHER
+    chmod +x /opt/pangenome/run-pangenome-aware.sh
+
+    # drop staged wheels (kept cwltool installed above)
+    rm -rf /opt/cwltool-wheels
+
+    cat > /usr/local/bin/bamsormadup <<'WRAP'
+#!/bin/bash
+export LD_LIBRARY_PATH=/opt/biobambam2/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+exec /opt/biobambam2/bin/bamsormadup "$@"
+WRAP
+    chmod +x /usr/local/bin/bamsormadup
+
+    # sanity: every CLI must resolve
+    command -v vg cwltool node run_pangenome_aware_deepvariant samtools bcftools bamsormadup
+    vg version
+    cwltool --version
+    node --version
+    /opt/pangenome/run-pangenome-aware.sh --help >/dev/null 2>&1 || true
+
+%environment
+    export PATH=/usr/local/bin:/opt/deepvariant/bin:/opt/conda/envs/bio/bin:$PATH
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+    export TF_USE_LEGACY_KERAS=1
+
+%runscript
+    exec "$@"
+
+%test
+    command -v vg cwltool node run_pangenome_aware_deepvariant samtools bcftools bamsormadup
+    test -x /opt/biobambam2/bin/bamsormadup
+    ! LD_LIBRARY_PATH=/opt/biobambam2/lib ldd /opt/biobambam2/bin/bamsormadup | grep -q 'not found'
+    vg version
+    cwltool --version
+    cwltool --validate --no-container \
+        /opt/pangenome/Workflows/germline-pangenome-pangenome-aware-cpu.cwl
+    test -x /opt/pangenome/run-pangenome-aware.sh
+    test -x /opt/deepvariant/bin/load_gbz_into_shared_memory
+    test -x /opt/deepvariant/bin/make_examples_pangenome_aware_dv
+    test -f /opt/pangenome/tools/filter_fastq.py

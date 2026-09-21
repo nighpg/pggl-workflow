@@ -14,6 +14,7 @@ unchanged.
 | --- | --- | --- | --- |
 | `Workflows/germline-pangenome-cpu.cwl` | `vg giraffe` (one job per read group, CWL scatter) | DeepVariant (`google/deepvariant:1.10.0`) | Portable; runs without containers when tools are on `$PATH` |
 | `Workflows/germline-pangenome-gpu.cwl` | `vg giraffe` (CPU, same as above) | DeepVariant GPU (`google/deepvariant:1.10.0-gpu`) | Identical inputs/outputs to the CPU workflow; the five DeepVariant steps run on the GPU (auto-detected when CUDA is visible). Requires a CUDA driver on the host and a container started with GPU passthrough (`singularity exec --nv ...`) |
+| `Workflows/germline-pangenome-pangenome-aware-cpu.cwl` | `vg giraffe` (CPU, same as above) | pangenome-aware DeepVariant (`google/deepvariant:pangenome_aware_deepvariant-1.10.0`) | Same inputs and outputs, but the caller also sees the graph's haplotypes (see *Pangenome-aware calling*). Needs its own image: the pangenome-aware one ships no plain `run_deepvariant` |
 
 Every input lane is mapped with `vg giraffe` onto the pangenome. Two ways to
 supply reads (can be combined, lanes are concatenated):
@@ -47,6 +48,8 @@ The pangenome graph + `giraffe` indexes (`gbz`, `dist`, `min`, `zipcodes`,
 | `call_sv` | `boolean` | Genotype the SVs embedded in the pangenome graph (`vg pack` + `vg call`) and emit `<prefix>.sv.vcf.gz` (default `false`) |
 | `snarls` | `File` | Precomputed snarls for the graph (`vg snarls`); optional but strongly recommended for whole-genome graphs. Ignored when `call_sv` is false |
 | `sv_min_length` | `int` | Minimum graph-site traversal length to be genotyped as an SV (`vg call -c`, default 50) |
+| `ref_name_pangenome` | `string` | *Pangenome-aware workflow only.* PanSN sample name of the reference inside the GBZ (`GRCh38`, `CHM13v2`); must name the assembly the BAM is in |
+| `sample_name_pangenome` | `string` | *Pangenome-aware workflow only.* Name for the haplotype panel taken from the GBZ; must differ from the reads' `SM` (default `pangenome`) |
 
 ## Outputs
 
@@ -353,6 +356,16 @@ job files cover the FASTQ and CRAM tracks; swap the workflow path for
 `Workflows/germline-pangenome-gpu.cwl` to smoke-test the GPU variant on the same
 toy inputs.
 
+A third job file runs the same toy inputs through the pangenome-aware caller
+(see *Pangenome-aware calling*); it needs the image built from
+`sif-build-pangenome-aware.def`, not the one above:
+
+```bash
+cwltool --no-container --outdir tests/toy/demo_out/pangenome_aware \
+  Workflows/germline-pangenome-pangenome-aware-cpu.cwl \
+  tests/toy/jobs/toy_pangenome_aware_job.json
+```
+
 `jobs/toy_job.json` (and the top-level `toy.json`) also show the new
 `autosome_chunks_count` input (the toy autosome has a single contig, so any
 count there just yields one chunk).
@@ -369,6 +382,61 @@ cwltool --no-container --outdir tests/toy/demo_out/emit_gam \
 cwltool --no-container --outdir tests/toy/demo_out/no_bam \
   Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/toy_keep_bam_job.json
 ```
+
+## Pangenome-aware calling
+
+`Workflows/germline-pangenome-pangenome-aware-cpu.cwl` swaps the five
+DeepVariant steps for `run_pangenome_aware_deepvariant`: `make_examples` draws
+the pileup image of the reads *and* of the graph's haplotypes at each candidate
+site, and a model trained on that pair infers the genotype. Google reports up
+to 25.5% fewer errors than linear-reference DeepVariant.
+
+**Mapping is untouched.** The caller takes an aligned BAM; it does not re-map.
+It reads only the `gbz` the aligner already used -- no `.dist`/`.min`/
+`.zipcodes` -- so the workflow passes its own `gbz` input straight through and
+everything up to and including `bamsormadup` is byte-identical to the CPU
+workflow. `call_sv` is unaffected: `vg pack`/`vg call` never involved
+DeepVariant.
+
+Two inputs are added, and both matter:
+
+| Input | Default | Notes |
+| --- | --- | --- |
+| `ref_name_pangenome` | `GRCh38` | PanSN sample name of the reference **inside the GBZ** — the assembly the BAM is in (`CHM13v2` for a JaSaPaGe run surjected onto CHM13) |
+| `sample_name_pangenome` | `pangenome` | Name recorded for the haplotype panel; **must differ from the reads' `SM`** |
+
+Two limits found while wiring this up:
+
+- **The graph must carry its reference as a named sample.** A GBZ whose
+  reference paths are plain contig names (`chr20`) has nothing to put in
+  `ref_name_pangenome` and the caller stops with `Pangenome path ids not found
+  for pangenome sample name`; naming a haplotype sample instead aborts inside
+  `Subgraph::Subgraph()`. `tests/toy_sv/` is such a graph, so it has no
+  pangenome-aware reference output. JaSaPaGe (`CHM13v2 GRCh38`) and
+  `tests/toy/` (`GRCh38#0#…`) are fine.
+- **The GBZ is loaded into `/dev/shm`**, shared by the `make_examples` shards.
+  The region name is global and this workflow calls five (or more, once the
+  autosome is chunked) regions at once under `--parallel`, so the tool derives
+  the name from the per-step output prefix. Size `/dev/shm` for the graph times
+  the number of concurrent steps.
+
+```bash
+./scripts/stage-sif-assets.sh
+apptainer build [--fakeroot --ignore-fakeroot-command] \
+    deepvariant-pangenome-aware-cpu-vg.sif sif-build-pangenome-aware.def
+
+cwltool --no-container --parallel --outdir tests/toy/demo_out/pangenome_aware \
+  Workflows/germline-pangenome-pangenome-aware-cpu.cwl \
+  tests/toy/jobs/toy_pangenome_aware_job.json
+```
+
+Against the standard caller on `tests/toy` (`demo_out/pangenome_aware/` vs
+`demo_out/opt_default/`): the BAM and the markdup metrics are identical, all
+five gVCFs have the same record and variant counts, and the genotypes agree
+everywhere except the haploid male chrX track, where the two callers disagree
+on both sites (`./.`, `1/1` vs `0/0`, `./.`) from identical AD/DP/VAF. The
+outputs are therefore *not* interchangeable with the standard track, which is
+why they are kept side by side rather than replacing it.
 
 ## Structural variants
 
