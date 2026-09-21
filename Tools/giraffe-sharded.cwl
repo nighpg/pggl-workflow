@@ -52,7 +52,7 @@ inputs:
 
   ref_paths:
     type: File
-    doc: Ordered list of reference paths in the graph, one per line; drives giraffe @SQ and surjection
+    doc: Ordered reference paths of the graph, either one path name per line or an HTSlib sequence dictionary (.dict); drives giraffe @SQ and surjection. The dictionary form is required when the reference is stored as PanSN subranges (chr1[585988]), because the contig names and lengths then come from the header instead of from the split paths.
     inputBinding:
       position: 5
 

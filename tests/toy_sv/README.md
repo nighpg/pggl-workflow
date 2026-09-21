@@ -22,6 +22,16 @@ cwltool --no-container --outdir tests/toy_sv/demo_out \
 `<prefix>.sv.vcf.gz` must contain exactly the three sites above, each `PASS` and
 heterozygous, with the `##contig` block in `toy_sv.ref_paths.txt` order.
 
+`jobs/toy_sv_dict_job.json` is the same run with `ref_paths` given as an HTSlib
+sequence dictionary (`ref.dict`) instead of a path list — the form a graph whose
+reference is stored as PanSN subranges needs. It must yield the same three sites
+and the same `##contig` block:
+
+```bash
+cwltool --no-container --outdir tests/toy_sv/demo_out \
+  Workflows/germline-pangenome-cpu.cwl tests/toy_sv/jobs/toy_sv_dict_job.json
+```
+
 ## Rebuilding
 
 `make_fixture.py` writes the phased VCF and simulates the reads (one haplotype
