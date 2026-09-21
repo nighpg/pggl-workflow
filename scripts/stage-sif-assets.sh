@@ -59,6 +59,34 @@ apptainer_bin() {
     command -v apptainer 2>/dev/null || command -v singularity 2>/dev/null || true
 }
 
+# curl only counts a few conditions as retryable -- timeouts and some HTTP
+# statuses -- and a connection reset part-way through a transfer is not one of
+# them. That is exactly how archive.ubuntu.com fails under load ("curl: (56)
+# Recv failure: Connection reset by peer"), and one such blip aborts a staging
+# run that has already spent several GB and many minutes. --retry-all-errors
+# covers it but only exists from curl 7.71, so retry in the shell as well and
+# stay version-independent.
+CURL_RETRY=( --retry 3 --retry-delay 2 --retry-connrefused )
+if curl --retry-all-errors --version >/dev/null 2>&1; then
+    CURL_RETRY+=( --retry-all-errors )
+fi
+
+fetch() {
+    local dest=$1 url=$2 attempt
+    for attempt in 1 2 3; do
+        if curl -fsSL "${CURL_RETRY[@]}" -o "${dest}" "${url}"; then
+            return 0
+        fi
+        rm -f "${dest}"
+        echo "    download failed (attempt ${attempt}/3): ${url}" >&2
+        if [ "${attempt}" -lt 3 ]; then
+            sleep $(( attempt * 5 ))
+        fi
+    done
+    echo "ERROR: could not download ${url} after 3 attempts" >&2
+    return 1
+}
+
 # Stage bamsormadup + its private shared libraries into sif-stage/biobambam2/.
 # A prebuilt tree (offline bundle / working repo) is copied as is; otherwise the
 # jammy debs are unpacked (glibc 2.34, because the DeepVariant 1.10 base is
@@ -98,7 +126,7 @@ stage_biobambam2() {
             else
                 need_network "the biobambam2 deb ${f}"
                 echo "    downloading ${f}"
-                curl -fsSLo "${tmp}/${f}" \
+                fetch "${tmp}/${f}" \
                     "http://archive.ubuntu.com/ubuntu/pool/${rel}"
             fi
             dpkg-deb -x "${tmp}/${f}" "${tmp}/root"
@@ -131,7 +159,7 @@ if [ ! -s sif-stage/vg ]; then
             exit 1
         fi
         echo "    downloading vg from GitHub releases (no docker required)"
-        curl -fsSLo sif-stage/vg \
+        fetch sif-stage/vg \
             "https://github.com/vgteam/vg/releases/download/${VG_VERSION}/vg"
     fi
 fi
@@ -149,7 +177,7 @@ if [ ! -x sif-stage/node/bin/node ]; then
         cp -R "${SRC}/sif-stage/node" sif-stage/node
     else
         need_network "the node ${NODE_VERSION} tarball"
-        curl -fsSLo "/tmp/${NODE_BASE}.tar.xz" \
+        fetch "/tmp/${NODE_BASE}.tar.xz" \
             "https://nodejs.org/dist/${NODE_VERSION}/${NODE_BASE}.tar.xz"
         tar -C sif-stage -xf "/tmp/${NODE_BASE}.tar.xz"
         mv "sif-stage/${NODE_BASE}" sif-stage/node
