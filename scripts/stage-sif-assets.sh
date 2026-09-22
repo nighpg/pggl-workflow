@@ -1,7 +1,9 @@
 #!/bin/bash
-# Stage the build inputs required by sif-build.def / sif-build-gpu.def:
-#   sif-stage/  -> vg v1.70.0 static binary, node v20.18.0, cwltool wheels and
-#                  biobambam2/bamsormadup (+ libmaus2/libgpgme/libnettle)
+# Stage the build inputs shared by sif-build.def, sif-build-gpu.def and
+# sif-build-pangenome-aware.def:
+#   sif-stage/  -> vg v1.70.0 static binary, node v20.18.0, cwltool wheels,
+#                  biobambam2/bamsormadup (+ libmaus2/libgpgme/libnettle) and
+#                  kmc (for Workflows/haplotype-sample.cwl)
 #   image/      -> deepvariant-opencode-cpu.sif (CPU base for the localimage
 #                  bootstrap) and image/opencode/ (optional opencode tarball
 #                  for the GPU SIF)
@@ -326,3 +328,4 @@ echo
 echo "Staged. Next (on a host with singularity/apptainer):"
 echo "  singularity build deepvariant-opencode-cpu-vg.sif sif-build.def"
 echo "  singularity build deepvariant-opencode-gpu-vg.sif sif-build-gpu.def"
+echo "  singularity build deepvariant-pangenome-aware-cpu-vg.sif sif-build-pangenome-aware.def"

@@ -31,6 +31,9 @@ The pangenome graph + `giraffe` indexes (`gbz`, `dist`, `min`, `zipcodes`,
 
 ## Inputs
 
+For the three germline workflows. `Workflows/haplotype-sample.cwl` takes its
+own, documented under *Haplotype sampling*.
+
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `fq1` / `fq2` | `File[]` | Read-pair FASTQs, one entry per read group (may be omitted; use `cram` instead) |
@@ -266,8 +269,9 @@ want to restrict which GPUs are used, pin them via `NVIDIA_VISIBLE_DEVICES`
 ## Self-contained SIF (no-setup on any host)
 
 `./sif-build.def` produces a single image containing DeepVariant, samtools/bcftools,
-`vg`, `node`, `cwltool`, biobambam2 (`bamsormadup`) and the workflow/tool/script
-tree under `/opt/pangenome`.
+`vg`, `node`, `cwltool`, biobambam2 (`bamsormadup`), `kmc` (for
+`Workflows/haplotype-sample.cwl`) and the workflow/tool/script tree under
+`/opt/pangenome`.
 Reference data (the ~54 GB JaSaPaGe graph + indexes + linear ref) is **not**
 bundled; bind-mount it or pass host paths at runtime.
 
@@ -348,6 +352,25 @@ Verified on a host with V100S GPUs (driver 550.x, devices `/dev/nvidia0`,
 `/dev/nvidia1`). The image's `%test` validates `germline-pangenome-gpu.cwl`
 with `cwltool --validate` at build time. The CPU SIF (`sif-build.def`) remains
 the portable fallback for hosts without a GPU.
+
+### Pangenome-aware SIF
+
+`./sif-build-pangenome-aware.def` is the image for
+`Workflows/germline-pangenome-pangenome-aware-cpu.cwl`. It is a separate image,
+not an option on the CPU one, because
+`google/deepvariant:pangenome_aware_deepvariant-1.10.0` ships no plain
+`run_deepvariant` at all — the two callers cannot live in one `--no-container`
+run. Everything else (vg, samtools/bcftools, biobambam2, kmc, node, cwltool,
+the workflow tree) is staged exactly as for the CPU image, so
+`./scripts/stage-sif-assets.sh` covers all three.
+
+```bash
+apptainer build [--fakeroot --ignore-fakeroot-command] \
+    deepvariant-pangenome-aware-cpu-vg.sif sif-build-pangenome-aware.def
+
+apptainer exec deepvariant-pangenome-aware-cpu-vg.sif \
+  /opt/pangenome/run-pangenome-aware.sh --ref_name_pangenome GRCh38 ... --outdir out/
+```
 
 ## Offline (air-gapped) setup
 

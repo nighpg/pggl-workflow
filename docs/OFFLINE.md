@@ -1,7 +1,7 @@
 # Running the pangenome workflow on an offline (air-gapped) host
 
 The pipeline itself never needs the network: `cwltool --no-container` inside the
-apptainer image runs `vg`, `samtools`, `bamsormadup` and DeepVariant from inside
+apptainer image runs `vg`, `samtools`, `bamsormadup`, `kmc` and DeepVariant from inside
 that image. Only **getting the image and its build inputs** requires internet
 access. The two scripts below split exactly along that line:
 
@@ -29,7 +29,7 @@ offline-bundle/
 ├── sif/          deepvariant-opencode-cpu-vg.sif      <- ready to run, ~6 GB
 │                 deepvariant-opencode-gpu-vg.sif      (only with --gpu)
 ├── image/        base images (only with --with-base / --no-build)
-├── sif-stage/    vg, node, cwltool wheels, bamsormadup + its libs
+├── sif-stage/    vg, node, cwltool wheels, bamsormadup + its libs, kmc
 ├── tool-images/  per-tool SIFs (only with --tool-images)
 ├── repo/         snapshot of this checkout (git archive HEAD)
 ├── SHA256SUMS, BUNDLE_INFO.txt, README-offline.md
@@ -45,6 +45,15 @@ Useful flags:
 | `--tool-images` | also fetch `quay.io/vgteam/vg`, `samtools`, ... as SIFs, for running the CWL with `cwltool --singularity` instead of the all-in-one image |
 | `--archive` / `--split 20G` | pack (and split) the bundle for transfer |
 | `--no-repo` | leave out the source snapshot |
+
+The fetch builds the CPU and (with `--gpu`) the GPU image. The pangenome-aware
+image is not one of them; build it on either side from the bundled repo and
+`sif-stage/`:
+
+```bash
+apptainer build [--fakeroot --ignore-fakeroot-command] \
+    deepvariant-pangenome-aware-cpu-vg.sif sif-build-pangenome-aware.def
+```
 
 Requirements on the online host: `apptainer`/`singularity` (preferred — it can
 build the final images) **or** `docker` (then the images are exported as
@@ -93,8 +102,13 @@ separately:
 ```
 graph.gbz  graph.dist  graph.min  graph.zipcodes  graph.ref_paths.txt
 graph.snarls                      # only for call_sv=true
+graph.hapl                        # only for Workflows/haplotype-sample.cwl
 reference.fa  reference.fa.fai    # (+ .dict)
 ```
+
+Haplotype sampling works offline from the same image -- `kmc` is in it -- once
+`graph.hapl` has been prepared for the graph (`vg gbwt -r`, then
+`vg haplotypes -H`; see *Haplotype sampling* in the README).
 
 The index preparation itself is offline-capable, because `vg` lives in the
 image:
@@ -155,5 +169,5 @@ all-in-one image with `--no-container` is the supported one.
 - **Rebuilding offline** requires `--with-base` (or `--no-build`) at fetch time,
   otherwise the multi-GB base images are left out of the bundle.
 - **Versions are pinned** in `scripts/stage-sif-assets.sh` (vg `v1.70.0`, node
-  `v20.18.0`, cwltool, biobambam2). Change them there and re-run the fetch so
-  the online and offline sides cannot drift apart.
+  `v20.18.0`, cwltool, biobambam2, kmc). Change them there and re-run the fetch
+  so the online and offline sides cannot drift apart.
