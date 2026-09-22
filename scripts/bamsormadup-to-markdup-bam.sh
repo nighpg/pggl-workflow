@@ -9,7 +9,9 @@
 #
 # The per-lane BAMs are already name-collated and read names are unique across
 # lanes, so concatenating them with samtools cat keeps the stream name-collated
-# and lets bamsormadup mark duplicates across all lanes together.
+# and lets bamsormadup mark duplicates across all lanes together -- but only if
+# the concatenated header declares every lane's read group, which samtools cat
+# does not do by itself. See the header merge below.
 #
 # bamsormadup must be on PATH (biobambam2). It is not part of the samtools
 # container; in the SIF it is installed via sif-stage (see sif-build-gpu.def).
@@ -37,7 +39,21 @@ case "${1:-}" in
     if [ "$#" -eq 1 ]; then
       IN=$1
     else
-      samtools cat -@ "$THREADS" -o in.namecol.bam "$@"
+      # samtools cat copies the header of its first input and nothing else, so
+      # every other lane's @RG line would be dropped while its reads keep their
+      # RG tags. That is an invalid BAM, and worse than cosmetic: bamsormadup
+      # files reads whose read group is undeclared under "Unknown Library", and
+      # it only ever looks for duplicates *within* a library -- so a duplicate
+      # pair split between lane 1 and any other lane goes unmarked. Build a
+      # header that declares all of them. @RG before @PG keeps the conventional
+      # grouping; samtools does not insist, but header readers are happier.
+      {
+        samtools view -H "$1" | grep -E '^@HD|^@SQ'
+        for b in "$@"; do samtools view -H "$b" | grep '^@RG' || true; done | awk '!seen[$0]++'
+        samtools view -H "$1" | grep -vE '^@HD|^@SQ|^@RG' || true
+      } > merged_header.sam
+      echo "merged header declares $(grep -c '^@RG' merged_header.sam) read group(s) from $# lane BAMs" >&2
+      samtools cat -@ "$THREADS" -h merged_header.sam -o in.namecol.bam "$@"
       IN=in.namecol.bam
     fi
     ;;
