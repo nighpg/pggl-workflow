@@ -1,7 +1,11 @@
 #!/usr/bin/env cwl-runner
-# GPU variant: identical to germline-pangenome-cpu.cwl except the five
-# DeepVariant steps run on the GPU (google/deepvariant:1.10.0-gpu; GPU use is
-# auto-detected from CUDA visibility).
+# GPU variant: identical to germline-pangenome-cpu.cwl, inputs included, except
+# that the five DeepVariant steps use the GPU image
+# (google/deepvariant:1.10.0-gpu). Only call_variants runs on the GPU, and it
+# picks the GPUs up from CUDA visibility by itself -- there is no input for the
+# GPU count because the workflow has no way to set it. make_examples, which
+# dominates the runtime, is CPU-only and is sharded by `threads` exactly as in
+# the CPU workflow.
 # vg giraffe + samtools stay on CPU. Requires a CUDA driver (e.g. V100S) on the
 # host and the container started with GPU passthrough:
 #   singularity exec --nv deepvariant-opencode-cpu-vg-gpu.sif \
@@ -112,13 +116,8 @@ inputs:
 
   threads:
     type: int
-    doc: CPU threads for vg giraffe and samtools (does NOT control GPU devices)
+    doc: CPU threads for vg giraffe, samtools and the DeepVariant shards. How many GPUs the run uses is not set here -- it is whatever CUDA is allowed to see (apptainer --nv, NVIDIA_VISIBLE_DEVICES, Slurm --gres).
     default: 32
-
-  gpu_count:
-    type: int
-    doc: Number of DeepVariant GPU shards (= TF GPU sessions, i.e. GPUs used by the caller)
-    default: 1
 
   emit_gam:
     type: boolean
@@ -299,7 +298,7 @@ steps:
     in:
       autosome_chunks: make_autosome_chunks/chunks
       autosome_interval: autosome_interval
-      base_shards: gpu_count
+      base_shards: threads
       prefix: prefix
     out:
       - chunks
@@ -333,7 +332,7 @@ steps:
       ref: ref
       reads: to_markdup_bam/bam
       interval: PAR_interval
-      num_shards: gpu_count
+      num_shards: threads
       prefix:
         source: prefix
         valueFrom: $(self + ".PAR")
@@ -346,7 +345,7 @@ steps:
       ref: ref
       reads: to_markdup_bam/bam
       interval: chrX_interval
-      num_shards: gpu_count
+      num_shards: threads
       prefix:
         source: prefix
         valueFrom: $(self + ".chrX_female")
@@ -359,7 +358,7 @@ steps:
       ref: ref
       reads: to_markdup_bam/bam
       interval: chrX_interval
-      num_shards: gpu_count
+      num_shards: threads
       postprocess_extra_args:
         valueFrom: "--haploid_contigs=chrX"
       prefix:
@@ -374,7 +373,7 @@ steps:
       ref: ref
       reads: to_markdup_bam/bam
       interval: chrY_interval
-      num_shards: gpu_count
+      num_shards: threads
       postprocess_extra_args:
         valueFrom: "--haploid_contigs=chrY"
       prefix:

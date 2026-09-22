@@ -191,7 +191,7 @@ cwltool is told to run every job whose inputs are ready at the same time; by
 default it runs them one after another. Pass `--parallel` (short `-p`) so the
 scattered jobs really overlap — the `align_chunks` giraffe blocks, the
 `autosome_chunks_count` chunks, and the per-chunk DeepVariant steps. This is
-required for `--gpu_count > 1` to keep more than one GPU busy, and without it a
+important for keeping several calling steps in flight, and without it a
 real WGS run is dramatically slower. Because `--parallel` dispatches all ready
 jobs at once, peak CPU is `--threads` × the number of concurrent jobs: size
 `--threads` to the node's core count (e.g. 64 on a 64-core box) and raise
@@ -255,47 +255,38 @@ cwltool --no-container --parallel --outdir out/ Workflows/germline-pangenome-gpu
   --PAR_interval interval_files/PAR.bed \
   --chrX_interval interval_files/chrX.bed \
   --chrY_interval interval_files/chrY.bed \
-  --prefix SAMPLE --threads 64 --gpu_count 2
+  --prefix SAMPLE --threads 64
 ```
 
-CPU usage and GPU usage are configured **independently**:
+**The inputs are exactly the CPU workflow's** — there is no GPU-count input,
+because the workflow has no way to set one. `call_variants` picks up whatever
+GPUs CUDA lets it see, so the number of GPUs is chosen outside CWL: Slurm's
+`--gres=gpu:N`, apptainer's `--nv`, or `NVIDIA_VISIBLE_DEVICES=0,1`.
 
-- `--threads N` — CPU threads for `vg giraffe` and the samtools steps (use the
-  CPU core count of the run node, e.g. `--threads 64`).
-- `--gpu_count N` — how many GPUs the caller devotes to the run (`--gpu_count 2`
-  on a two-GPU box; default 1).
-
-CUDA must be visible to the container (`NVIDIA_VISIBLE_DEVICES` / `--nv`); if you
-want to restrict which GPUs are used, pin them via `NVIDIA_VISIBLE_DEVICES`
-(e.g. `=0,1`), matching `--gpu_count`.
-
-**Two things to know before expecting this to be faster.**
-
-*Forgetting `--nv` does not fail.* Without GPU passthrough DeepVariant simply
-reports `Could not find cuda drivers on your machine, GPU will not be used` and
-runs the whole thing on the CPU — to completion, correct, and much slower than
-the CPU workflow, for the reason below. Check the log, or have the runner check
-that a GPU is actually allocated before starting.
-
-*`gpu_count` currently also throttles a CPU stage.* The workflow passes it to
-`run_deepvariant --num_shards`, and that flag is not about GPUs at all:
+`--threads N` keeps its CPU meaning and also sets the DeepVariant shard count,
+as in the CPU workflow. That is deliberate: it feeds `run_deepvariant
+--num_shards`, and that flag is not about GPUs at all —
 
 ```
 --num_shards: Optional. Number of shards for make_examples step.
 ```
 
-`make_examples` is CPU-only and is the dominant cost of DeepVariant on a WGS
-sample; only `call_variants` uses the GPU. So `--gpu_count 2` runs
-`make_examples` with **2** shards where the CPU workflow would use `--threads`
-(32, 64, ...), and the stage that GPUs cannot help slows down by more than the
-stage they do help speeds up. Google's own CPU-vs-GPU comparison shows the
-shape of it: `call_variants` 2m1s → 1m52s while `make_examples` stayed at ~2
-hours. Until this is untangled — `num_shards` wants to follow `threads`, with
-`gpu_count` left to size GPU use only — expect the GPU workflow to be *slower*
-than the CPU one unless you raise `gpu_count` well past the number of GPUs you
-have, which contradicts what it says it means. The fix is a one-line change per
-calling step and is waiting on a GPU host to verify against; this cluster has
-no GRES=gpu node.
+— `make_examples` is CPU-only and dominates DeepVariant's runtime on a WGS
+sample, while only `call_variants` uses the GPU. Sharding it by a GPU count
+would starve the expensive stage to speed up the cheap one; Google's own
+CPU-vs-GPU comparison shows the shape of it, `call_variants` 2m1s → 1m52s while
+`make_examples` stayed at ~2 hours.
+
+**So temper expectations.** With the official GPU image only `call_variants`
+moves to the GPU, so the gain is bounded by how little of the runtime that
+stage was. Moving `make_examples` and `postprocess_variants` to the GPU as well
+is what NVIDIA Parabricks does, and is a different tool, not a flag.
+
+**Forgetting `--nv` does not fail.** Without GPU passthrough DeepVariant just
+reports `Could not find cuda drivers on your machine, GPU will not be used` and
+runs to completion on the CPU — correct, and quietly not what was asked for.
+Check the log, or have the submitting script refuse to start a GPU workflow
+without an allocated GPU.
 
 `--parallel` in the example above is subject to the same staging race described
 under *Running*: fine for a couple of lanes, not for a sample with many.
@@ -733,7 +724,7 @@ a 64-thread CPU box):
   contiguous contigs into ~`N` bp-balanced chunks, and an `N` at or above the
   number of contigs gives one chunk per contig. A contig is never split across
   chunks. Each chunk still gets `ceil(base_shards / #chunks)` DeepVariant shards
-  (CPU: `threads`; GPU: `gpu_count`).
+  (`threads`, in both the CPU and the GPU workflow).
 
 - `autosome_chunks` (BED `File[]`, default `[]`): optional **explicit** chunk
   override, used verbatim in the given order. Leave it unset to let
