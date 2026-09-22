@@ -39,6 +39,9 @@ BIOBAMBAM2_VERSION="2.0.183+ds-1"
 LIBMAUS2_VERSION="2.0.810+ds-1"
 LIBGPGME11_VERSION="1.16.0-1.2ubuntu4"
 LIBNETTLE8_VERSION="3.7.3-1build2"
+# KMC counts the sample k-mers that drive haplotype sampling; jammy build, same
+# glibc as the DeepVariant base.
+KMC_VERSION="3.2.1+dfsg-1"
 
 mkdir -p sif-stage sif-stage/wheels image image/opencode
 
@@ -146,6 +149,43 @@ stage_biobambam2() {
         LD_LIBRARY_PATH="${dest}/lib" ldd "${dest}/bin/bamsormadup" | grep 'not found' >&2
         exit 1
     fi
+}
+
+# Stage kmc/kmc_tools into sif-stage/kmc/.  Same shape as stage_biobambam2: a
+# prebuilt tree is copied as is, otherwise the jammy deb is unpacked.  kmc is a
+# static-ish binary with no private libraries, so there is nothing else to carry.
+stage_kmc() {
+    local dest="sif-stage/kmc"
+    if [ ! -x "${dest}/kmc" ] && [ -x "${SRC}/sif-stage/kmc/kmc" ]; then
+        echo "    copying prebuilt tree from ${SRC}/sif-stage/kmc"
+        rm -rf "${dest}"
+        cp -R "${SRC}/sif-stage/kmc" "${dest}"
+    fi
+    if [ ! -x "${dest}/kmc" ]; then
+        if ! command -v dpkg-deb >/dev/null; then
+            echo "ERROR: no prebuilt sif-stage/kmc tree and no 'dpkg-deb' to unpack the deb" >&2
+            exit 1
+        fi
+        mkdir -p "${dest}"
+        local tmp f
+        tmp="$(mktemp -d)"
+        f="kmc_${KMC_VERSION}_amd64.deb"
+        if [ -n "${PGGL_KMC_DEB:-}" ] && [ -s "${PGGL_KMC_DEB}" ]; then
+            cp -f "${PGGL_KMC_DEB}" "${tmp}/${f}"
+        elif [ -s "${SRC}/sif-stage/kmc-debs/${f}" ]; then
+            cp -f "${SRC}/sif-stage/kmc-debs/${f}" "${tmp}/${f}"
+        else
+            need_network "the kmc deb ${f}"
+            echo "    downloading ${f}"
+            fetch "${tmp}/${f}" "http://archive.ubuntu.com/ubuntu/pool/universe/k/kmc/${f}"
+        fi
+        dpkg-deb -x "${tmp}/${f}" "${tmp}/root"
+        install -m 0755 "${tmp}/root/usr/bin/kmc" "${dest}/kmc"
+        install -m 0755 "${tmp}/root/usr/bin/kmc_tools" "${dest}/kmc_tools"
+        install -m 0755 "${tmp}/root/usr/bin/kmc_dump" "${dest}/kmc_dump" 2>/dev/null || true
+        rm -rf "${tmp}"
+    fi
+    test -x "${dest}/kmc"
 }
 
 echo "==> vg ${VG_VERSION}"
@@ -277,6 +317,10 @@ fi
 echo "==> bamsormadup (biobambam2 ${BIOBAMBAM2_VERSION})"
 stage_biobambam2
 echo "    bamsormadup: $(ls -l sif-stage/biobambam2/bin/bamsormadup | awk '{print $5" bytes"}'), libs: $(ls sif-stage/biobambam2/lib | wc -l)"
+
+echo "==> kmc ${KMC_VERSION}"
+stage_kmc
+echo "    kmc: $(sif-stage/kmc/kmc 2>&1 | head -1)"
 
 echo
 echo "Staged. Next (on a host with singularity/apptainer):"

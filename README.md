@@ -15,6 +15,7 @@ unchanged.
 | `Workflows/germline-pangenome-cpu.cwl` | `vg giraffe` (one job per read group, CWL scatter) | DeepVariant (`google/deepvariant:1.10.0`) | Portable; runs without containers when tools are on `$PATH` |
 | `Workflows/germline-pangenome-gpu.cwl` | `vg giraffe` (CPU, same as above) | DeepVariant GPU (`google/deepvariant:1.10.0-gpu`) | Identical inputs/outputs to the CPU workflow; the five DeepVariant steps run on the GPU (auto-detected when CUDA is visible). Requires a CUDA driver on the host and a container started with GPU passthrough (`singularity exec --nv ...`) |
 | `Workflows/germline-pangenome-pangenome-aware-cpu.cwl` | `vg giraffe` (CPU, same as above) | pangenome-aware DeepVariant (`google/deepvariant:pangenome_aware_deepvariant-1.10.0`) | Same inputs and outputs, but the caller also sees the graph's haplotypes (see *Pangenome-aware calling*). Needs its own image: the pangenome-aware one ships no plain `run_deepvariant` |
+| `Workflows/haplotype-sample.cwl` | — | — | Preparation, not a germline run: builds a sample's personalized pangenome and its giraffe indexes for any of the above to then use (see *Haplotype sampling*) |
 
 Every input lane is mapped with `vg giraffe` onto the pangenome. Two ways to
 supply reads (can be combined, lanes are concatenated):
@@ -457,14 +458,29 @@ vg 1.70 rejects version 4 with `Expected version 5 to 5, got version 4`. The vg
 wiki also says to rebuild anything made before v1.64.0. Regenerating it is
 cheap next to the distance index (see the timings below).
 
-**Per sample:**
+**Per sample**, `Workflows/haplotype-sample.cwl` does the three steps (KMC →
+`vg haplotypes` → `vg autoindex`, plus `vg snarls` when `make_snarls` is set):
 
 ```bash
-kmc -k29 -m64 -okff -t N -hp @reads.txt sample "$TMPDIR"      # k must match the .hapl
-vg haplotypes -i g.hapl -k sample.kff -g sample.gbz \
-    --include-reference --set-reference GRCh38 --diploid-sampling graph.gbz
-vg autoindex -p sample -G sample.gbz -w giraffe -t N -T "$TMPDIR"
+cwltool --no-container --outdir sample_graph/ Workflows/haplotype-sample.cwl \
+  --fq1 L1_R1.fastq --fq2 L1_R2.fastq --fq1 L2_R1.fastq --fq2 L2_R2.fastq \
+  --gbz graph.gbz --hapl g.hapl --ref_sample GRCh38 --prefix SAMPLE --threads 32
+
+# then any germline workflow, with only the graph inputs moved:
+cwltool --no-container --outdir out/ Workflows/germline-pangenome-cpu.cwl \
+  --gbz sample_graph/SAMPLE.personalized.gbz \
+  --dist sample_graph/SAMPLE.personalized.dist \
+  --min  sample_graph/SAMPLE.personalized.min \
+  --zipcodes sample_graph/SAMPLE.personalized.zipcodes \
+  --ref_paths ... --ref ... --ref_path_prefix 'GRCh38#0#' ...   # unchanged
 ```
+
+It is deliberately a separate workflow rather than a step inside the germline
+one: the personalized graph belongs to the *sample*, so the same one serves the
+standard and the pangenome-aware caller and every re-run, instead of being
+rebuilt each time (about an hour for a 38x genome). It takes FASTQ — KMC cannot
+read CRAM either way — and `ref_paths`, `ref` and `ref_path_prefix` are
+untouched by sampling, so they carry over verbatim.
 
 - **`--include-reference` / `--set-reference <assembly>` are mandatory here.**
   Without them the reference paths are dropped from the sampled graph, there is

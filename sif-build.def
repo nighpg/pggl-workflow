@@ -40,6 +40,7 @@ From: image/deepvariant-opencode-cpu.sif
     sif-stage/node /usr/local/node-v20.18.0-linux-x64
     sif-stage/wheels /opt/cwltool-wheels
     sif-stage/biobambam2 /opt/biobambam2
+    sif-stage/kmc /opt/kmc
     Workflows /opt/pangenome/Workflows
     Tools /opt/pangenome/Tools
     scripts /opt/pangenome/scripts
@@ -60,6 +61,13 @@ From: image/deepvariant-opencode-cpu.sif
     test -n "$(ls -A /opt/biobambam2/lib)"
     ! LD_LIBRARY_PATH=/opt/biobambam2/lib ldd /opt/biobambam2/bin/bamsormadup | grep -q 'not found'
 
+    # kmc counts the sample k-mers that drive haplotype sampling
+    # (Workflows/haplotype-sample.cwl); it needs no private libraries.
+    test -x /opt/kmc/kmc
+    ln -sf /opt/kmc/kmc /usr/local/bin/kmc
+    ln -sf /opt/kmc/kmc_tools /usr/local/bin/kmc_tools
+    kmc 2>&1 | head -1
+
     # node v20.18.0 on PATH (via /usr/local/bin)
     ln -sf /usr/local/node-v20.18.0-linux-x64/bin/node /usr/local/bin/node
     ln -sf /usr/local/node-v20.18.0-linux-x64/bin/npm /usr/local/bin/npm
@@ -79,6 +87,7 @@ From: image/deepvariant-opencode-cpu.sif
     test -f /opt/pangenome/scripts/vg-call-sv.sh
     test -f /opt/pangenome/interval_files/chm13_t2t/autosome.bed
     test -f /opt/pangenome/tools/filter_fastq.py
+    test -f /opt/pangenome/Workflows/haplotype-sample.cwl
 
     # launcher: runs the bundled workflow with native tools, no container layer
     cat > /opt/pangenome/run-pangenome.sh <<'LAUNCHER'
@@ -144,7 +153,7 @@ WRAP
     chmod +x /usr/local/bin/bamsormadup
 
     # sanity: every CLI must resolve
-    command -v vg cwltool node run_deepvariant samtools bcftools bamsormadup
+    command -v vg cwltool node run_deepvariant samtools bcftools bamsormadup kmc
     vg version
     cwltool --version
     node --version
@@ -160,7 +169,7 @@ WRAP
     exec "$@"
 
 %test
-    command -v vg cwltool node run_deepvariant samtools bcftools bamsormadup
+    command -v vg cwltool node run_deepvariant samtools bcftools bamsormadup kmc
     test -x /opt/biobambam2/bin/bamsormadup
     ! LD_LIBRARY_PATH=/opt/biobambam2/lib ldd /opt/biobambam2/bin/bamsormadup | grep -q 'not found'
     vg version
@@ -169,3 +178,4 @@ WRAP
         /opt/pangenome/Workflows/germline-pangenome-cpu.cwl
     test -x /opt/pangenome/run-pangenome.sh
     test -f /opt/pangenome/tools/filter_fastq.py
+    test -f /opt/pangenome/Workflows/haplotype-sample.cwl
