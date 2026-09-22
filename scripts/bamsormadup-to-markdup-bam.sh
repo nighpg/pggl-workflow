@@ -3,10 +3,9 @@
 # Produces a coordinate-sorted, duplicate-marked BAM plus markdup statistics
 # from the name-collated per-lane BAMs produced by samtools-prep-lane.sh.
 #
-# This is the biobambam2 ("B") alternative to samtools-to-markdup-bam.sh:
-# bamsormadup does mate fixing, coordinate sorting and duplicate marking in a
-# single streaming pass, so the per-lane sort -n / fixmate / sort and the
-# final samtools markdup are all replaced by this step.
+# biobambam2's bamsormadup does mate fixing, coordinate sorting and duplicate
+# marking in a single streaming pass, replacing the per-lane sort -n / fixmate /
+# sort and the final samtools markdup that this step grew out of.
 #
 # The per-lane BAMs are already name-collated and read names are unique across
 # lanes, so concatenating them with samtools cat keeps the stream name-collated
