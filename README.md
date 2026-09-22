@@ -262,13 +262,43 @@ CPU usage and GPU usage are configured **independently**:
 
 - `--threads N` — CPU threads for `vg giraffe` and the samtools steps (use the
   CPU core count of the run node, e.g. `--threads 64`).
-- `--gpu_count N` — number of DeepVariant shards run on the GPU (a shard = one
-  TensorFlow GPU session), i.e. the number of GPUs the caller devotes to the run
-  (`--gpu_count 2` on a two-GPU box; default 1).
+- `--gpu_count N` — how many GPUs the caller devotes to the run (`--gpu_count 2`
+  on a two-GPU box; default 1).
 
 CUDA must be visible to the container (`NVIDIA_VISIBLE_DEVICES` / `--nv`); if you
 want to restrict which GPUs are used, pin them via `NVIDIA_VISIBLE_DEVICES`
 (e.g. `=0,1`), matching `--gpu_count`.
+
+**Two things to know before expecting this to be faster.**
+
+*Forgetting `--nv` does not fail.* Without GPU passthrough DeepVariant simply
+reports `Could not find cuda drivers on your machine, GPU will not be used` and
+runs the whole thing on the CPU — to completion, correct, and much slower than
+the CPU workflow, for the reason below. Check the log, or have the runner check
+that a GPU is actually allocated before starting.
+
+*`gpu_count` currently also throttles a CPU stage.* The workflow passes it to
+`run_deepvariant --num_shards`, and that flag is not about GPUs at all:
+
+```
+--num_shards: Optional. Number of shards for make_examples step.
+```
+
+`make_examples` is CPU-only and is the dominant cost of DeepVariant on a WGS
+sample; only `call_variants` uses the GPU. So `--gpu_count 2` runs
+`make_examples` with **2** shards where the CPU workflow would use `--threads`
+(32, 64, ...), and the stage that GPUs cannot help slows down by more than the
+stage they do help speeds up. Google's own CPU-vs-GPU comparison shows the
+shape of it: `call_variants` 2m1s → 1m52s while `make_examples` stayed at ~2
+hours. Until this is untangled — `num_shards` wants to follow `threads`, with
+`gpu_count` left to size GPU use only — expect the GPU workflow to be *slower*
+than the CPU one unless you raise `gpu_count` well past the number of GPUs you
+have, which contradicts what it says it means. The fix is a one-line change per
+calling step and is waiting on a GPU host to verify against; this cluster has
+no GRES=gpu node.
+
+`--parallel` in the example above is subject to the same staging race described
+under *Running*: fine for a couple of lanes, not for a sample with many.
 
 ## Self-contained SIF (no-setup on any host)
 
@@ -748,3 +778,19 @@ chunks vs the default single-process run):
 - On Lustre-backed filesystems, staging the graph + indexes on node-local disk
   (`cp` to `/tmp`) avoids long per-read lock stalls when `vg` maps against them;
   the toy test data is tiny enough not to care.
+- **Scratch space is the quiet requirement.** A 38x sample decodes to ~285 GB of
+  FASTQ, KMC's KFF is another 23 GB, and cwltool stages inputs per job. Cluster
+  nodes routinely have a small node-local `/tmp` (23 GB on the box this was run
+  on), so point `--tmpdir-prefix` / `--tmp-outdir-prefix`, `TMPDIR` and
+  `vg autoindex -T` at shared storage rather than letting them default.
+- **Memory is per giraffe process, not per run.** Each one holds the whole index
+  set resident — ~52 GB for the JaSaPaGe set (`min` 38 GB + `dist` 7.6 GB +
+  `gbz` 3.3 GB + `zipcodes` 2.6 GB). `align_chunks` multiplies that, and so does
+  any scheduler-level parallelism, so size both against the node rather than
+  against the core count.
+- **Read groups survive a CRAM/BAM only if you split it first.** The
+  aligned-reads track collapses the input to one lane and stamps the first `@RG`
+  on every read, because `samtools fastq` does not carry read groups. To keep a
+  sample's original lanes — and per-lane duplicate marking with them — split by
+  read group first (`samtools split -f '%!.cram'`) and pass the pieces as FASTQ
+  lanes with their own `@RG` strings.
