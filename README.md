@@ -14,7 +14,7 @@ unchanged.
 | --- | --- | --- | --- |
 | `Workflows/germline-pangenome-cpu.cwl` | `vg giraffe` (one job per read group, CWL scatter) | DeepVariant (`google/deepvariant:1.10.0`) | Portable; runs without containers when tools are on `$PATH` |
 | `Workflows/germline-pangenome-gpu.cwl` | `vg giraffe` (CPU, same as above) | DeepVariant GPU (`google/deepvariant:1.10.0-gpu`) | Identical inputs/outputs to the CPU workflow; the five DeepVariant steps run on the GPU (auto-detected when CUDA is visible). Requires a CUDA driver on the host and a container started with GPU passthrough (`singularity exec --nv ...`) |
-| `Workflows/germline-pangenome-pangenome-aware-cpu.cwl` | `vg giraffe` (CPU, same as above) | pangenome-aware DeepVariant (`google/deepvariant:pangenome_aware_deepvariant-1.10.0`) | Same inputs and outputs, but the caller also sees the graph's haplotypes (see *Pangenome-aware calling*). Needs its own image: the pangenome-aware one ships no plain `run_deepvariant` |
+| `Workflows/germline-pangenome-pangenome-aware-cpu.cwl` | `vg giraffe` (CPU, same as above) | pangenome-aware DeepVariant (`google/deepvariant:pangenome_aware_deepvariant-1.10.0`) | Same inputs and outputs, but the caller also sees the graph's haplotypes (see *Pangenome-aware calling*). Needs its own image: the pangenome-aware one ships no plain `run_deepvariant`. **Only works on a graph whose reference is whole paths** — not JaSaPaGe's GRCh38 |
 | `Workflows/haplotype-sample.cwl` | — | — | Preparation, not a germline run: builds a sample's personalized pangenome and its giraffe indexes for any of the above to then use (see *Haplotype sampling*) |
 
 Every input lane is mapped with `vg giraffe` onto the pangenome. Two ways to
@@ -128,6 +128,11 @@ awk 'BEGIN{OFS="\t"} $1 ~ /^chr([0-9]+|X|Y|M)$/ {print "@SQ","SN:GRCh38#0#"$1,"L
 paths, so on such a graph it picks the wrong sample (or stops with "only N
 full-length paths"). Build the dictionary as above and run `vg autoindex`
 directly.
+
+This works for surjection, and therefore for the standard and GPU workflows.
+It does **not** make the graph usable by pangenome-aware DeepVariant, which
+resolves a contig to a single fragment instead of to the parent — see
+*Pangenome-aware calling*.
 
 **What is lost.** Only what is in the graph can be called. JaSaPaGe holds 92.4%
 of GRCh38 by length but **97.6% of its non-N bases** — the ~70 Mb that was
@@ -590,15 +595,53 @@ Two inputs are added, and both matter:
 | `ref_name_pangenome` | `GRCh38` | PanSN sample name of the reference **inside the GBZ** — the assembly the BAM is in (`CHM13v2` for a JaSaPaGe run surjected onto CHM13) |
 | `sample_name_pangenome` | `pangenome` | Name recorded for the haplotype panel; **must differ from the reads' `SM`** |
 
-Two limits found while wiring this up:
+Three limits found while wiring this up. The first is the one that decides
+whether a given graph can be used at all.
+
+- **The reference must be whole paths, not subranges.** This is stricter than
+  the `reference_samples` tag, and it is what rules JaSaPaGe out for GRCh38:
+  that graph tags both `CHM13v2` and `GRCh38` as reference samples, but only
+  CHM13v2 is stored as 25 full-length paths. GRCh38 survives as 165 subranges
+  (`GRCh38#0#chrX[222346]`), and `make_examples` then dies on the first
+  candidate outside the first fragment of a contig:
+
+  ```
+  F0000 subgraph.cpp:165] Subgraph::Subgraph():
+        Path GRCh38#0#chrX[222346] does not contain offset 2801979
+  ```
+
+  The tool resolves a contig to *one* fragment — the first — rather than to the
+  parent contig, which `vg surject` does do (`Output coordinates will be in
+  GRCh38#0#chr1 instead`). Measured on JaSaPaGe: `chr1:1,000,000-1,010,000`,
+  inside the first fragment `[585988]`, calls fine; `chr1:3,000,000-3,010,000`,
+  inside `[2755518]`, aborts against `[585988]`. **Restricting `--regions` to
+  where the reference exists therefore does not help** — only each contig's
+  first fragment is reachable, 2.1 Mb of chr1 and 16 kb of chrX.
+
+  Check before running rather than after six hours of alignment:
+
+  ```bash
+  vg paths -x graph.gbz -L | grep '^GRCh38#' | grep -vc '\['   # full-length paths
+  vg gbwt --tags -Z graph.gbz | grep reference_samples
+  ```
+
+  The first number must be the contig count you expect (25 for a human graph),
+  with no `[...]` paths for that sample. On JaSaPaGe it is 1 — `chrM` alone.
+
+  To *build* a graph that qualifies, the assembly has to be the **first**
+  `--reference` given to `cactus-pangenome`. Minigraph-Cactus protects only
+  that one: it is "never clipped, never self-aligned", while later `--reference`
+  samples are "clipped as usual, but end up as 'reference-sense' paths". So
+  `--reference CHM13v2 GRCh38` yields exactly what JaSaPaGe has — GRCh38 tagged
+  as a reference and fragmented anyway. Only one assembly can be whole per
+  graph, which is why HPRC ships a GRCh38 graph and a CHM13 graph separately.
 
 - **The graph must carry its reference as a named sample.** A GBZ whose
   reference paths are plain contig names (`chr20`) has nothing to put in
   `ref_name_pangenome` and the caller stops with `Pangenome path ids not found
   for pangenome sample name`; naming a haplotype sample instead aborts inside
-  `Subgraph::Subgraph()`. `tests/toy_sv/` is such a graph, so it has no
-  pangenome-aware reference output. JaSaPaGe (`CHM13v2 GRCh38`) and
-  `tests/toy/` (`GRCh38#0#…`) are fine.
+  `Subgraph::Subgraph()` too. `tests/toy_sv/` is such a graph, so it has no
+  pangenome-aware reference output; `tests/toy/` (`GRCh38#0#…`, whole) is fine.
 - **The GBZ is loaded into `/dev/shm`**, shared by the `make_examples` shards.
   The region name is global and this workflow calls five (or more, once the
   autosome is chunked) regions at once under `--parallel`, so the tool derives
