@@ -35,9 +35,15 @@ inputs:
 
   cram:
     type: File?
-    doc: Coordinate-sorted aligned CRAM in reference coordinates with @SQ matching ref; reads are recovered to FASTQ (decoded with ref) and re-mapped onto the pangenome with vg giraffe, exactly like a FASTQ lane (its @RG is carried over)
+    doc: Coordinate-sorted aligned CRAM in reference coordinates with @SQ matching ref; reads are recovered to FASTQ (decoded with ref) and re-mapped onto the pangenome with vg giraffe, exactly like a FASTQ lane (its @RG is carried over). Mutually exclusive with bam.
     secondaryFiles:
       - { pattern: ".crai", required: false }
+
+  bam:
+    type: File?
+    doc: Coordinate-sorted aligned BAM, handled exactly like cram except that no reference decoding is needed. Mutually exclusive with cram.
+    secondaryFiles:
+      - { pattern: ".bai", required: false }
 
   gbz:
     type: File
@@ -158,6 +164,7 @@ steps:
       prefix: prefix
       threads: threads
       cram: cram
+      bam: bam
       ref: ref
     out:
       - fq1

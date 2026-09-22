@@ -4,7 +4,15 @@ class: CommandLineTool
 id: samtools-cram-to-fastq
 label: samtools-cram-to-fastq
 cwlVersion: v1.1
-doc: Recover read-pair FASTQ from an aligned CRAM (decoded with the linear reference) for re-mapping onto a pangenome.
+doc: |
+  Recover read-pair FASTQ from aligned reads -- CRAM or BAM -- for re-mapping
+  onto a pangenome. A CRAM is decoded against the linear reference; a BAM
+  carries its own sequences and needs none.
+
+  cram and bam are separate inputs rather than one, so a job file cannot pass a
+  CRAM where a BAM is meant without saying so. Giving both is an error: the
+  optional ones drop out of the command line, and the script reads the argument
+  count.
 
 requirements:
   InlineJavascriptRequirement: {}
@@ -30,9 +38,17 @@ inputs:
     doc: Number of threads
     default: 1
 
+  bam:
+    type: File?
+    doc: Coordinate-sorted aligned BAM; produces reads when provided (null otherwise). Mutually exclusive with cram.
+    secondaryFiles:
+      - { pattern: ".bai", required: false }
+    inputBinding:
+      position: 3
+
   cram:
     type: File?
-    doc: Coordinate-sorted aligned CRAM in reference coordinates; produces reads when provided (null otherwise)
+    doc: Coordinate-sorted aligned CRAM in reference coordinates; produces reads when provided (null otherwise). Mutually exclusive with bam.
     secondaryFiles:
       - { pattern: ".crai", required: false }
     inputBinding:
@@ -40,7 +56,7 @@ inputs:
 
   ref:
     type: File
-    doc: Linear reference FASTA matching the CRAM @SQ (used to decode); sequences must match the graph reference paths
+    doc: Linear reference FASTA matching the input @SQ. Used to decode a CRAM; still required with a BAM because the rest of the workflow needs it anyway.
     secondaryFiles:
       - .fai
     inputBinding:
@@ -55,18 +71,18 @@ arguments:
 outputs:
   fq1:
     type: File?
-    doc: Recovered read-1 FASTQ (null when cram is not provided)
+    doc: Recovered read-1 FASTQ (null when neither cram nor bam is provided)
     outputBinding:
       glob: $(inputs.prefix).cram2fq.R1.fastq
 
   fq2:
     type: File?
-    doc: Recovered read-2 FASTQ (null when cram is not provided)
+    doc: Recovered read-2 FASTQ (null when neither cram nor bam is provided)
     outputBinding:
       glob: $(inputs.prefix).cram2fq.R2.fastq
 
   rg:
     type: File?
-    doc: Read group @RG line carried over from the CRAM header (null when cram is not provided)
+    doc: Read group @RG line carried over from the input header (null when neither cram nor bam is provided)
     outputBinding:
       glob: $(inputs.prefix).cram2fq.rg.txt

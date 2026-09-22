@@ -21,10 +21,13 @@ Every input lane is mapped with `vg giraffe` onto the pangenome. Two ways to
 supply reads (can be combined, lanes are concatenated):
 
 - **FASTQ track** (default): `fq1`/`fq2` + `rg` → `vg giraffe` alignment.
-- **CRAM track**: an aligned CRAM (linear/`ref` coordinates, `@SQ` matching
-  `ref`) is decoded with `ref` back to read-pair FASTQ (`samtools collate` +
-  `fastq`, its `@RG` header is carried over, orphans are dropped), then
-  re-mapped onto the pangenome with `vg giraffe` exactly like a FASTQ lane.
+- **Aligned-reads track**: an aligned **CRAM** (linear/`ref` coordinates, `@SQ`
+  matching `ref`) or **BAM** is name-collated back to read-pair FASTQ
+  (`samtools collate` + `fastq`, its `@RG` header is carried over, orphans are
+  dropped), then re-mapped onto the pangenome with `vg giraffe` exactly like a
+  FASTQ lane. A CRAM is decoded against `ref`; a BAM carries its own sequences,
+  so no decoding happens. `cram` and `bam` are separate inputs and giving both
+  is an error rather than something resolved silently.
 
 The pangenome graph + `giraffe` indexes (`gbz`, `dist`, `min`, `zipcodes`,
 `ref_paths`) are required in BOTH modes.
@@ -38,7 +41,8 @@ own, documented under *Haplotype sampling*.
 | --- | --- | --- |
 | `fq1` / `fq2` | `File[]` | Read-pair FASTQs, one entry per read group (may be omitted; use `cram` instead) |
 | `rg` | `string[]` | Full `@RG` string per read group, e.g. `@RG\tID:L1\tPL:ILLUMINA\tSM:SAMPLE` (literal `\t` or real tabs both work) |
-| `cram` | `File` | Aligned CRAM in reference coordinates (`@SQ` matching `ref`); recovered to FASTQ and re-mapped onto the pangenome (its `@RG` is carried over) |
+| `cram` | `File` | Aligned CRAM in reference coordinates (`@SQ` matching `ref`); recovered to FASTQ and re-mapped onto the pangenome (its `@RG` is carried over). Mutually exclusive with `bam` |
+| `bam` | `File` | Aligned BAM, handled exactly like `cram` but without reference decoding. Mutually exclusive with `cram` |
 | `gbz` | `File` | Pangenome graph (required) |
 | `dist` / `min` / `zipcodes` | `File` | giraffe distance / minimizer / zipcode indexes (required) |
 | `ref_paths` | `File` | Ordered reference path names (PanSN), one per line; drives giraffe `@SQ` and surjection (required) |
@@ -424,6 +428,12 @@ cwltool --no-container --outdir tests/toy/demo_out/fastq_track \
 #    (samtools collate -> fastq -T ref) and re-mapped with vg giraffe
 cwltool --no-container --outdir tests/toy/demo_out/cram_track \
   Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/toy_cram_job.json
+
+# 3) BAM track: same path, no reference decoding. There is no BAM fixture --
+#    make one from the CRAM and swap `cram` for `bam` in the job file:
+#      samtools view -b -T tests/toy/ref.fa -o toy_in.bam tests/toy/toy_in.cram
+#    It reproduces the CRAM track exactly: identical alignments, identical
+#    markdup metrics and identical gVCFs.
 ```
 
 Each run produces `<prefix>.bam` (+`.bai`), `<prefix>.markdup.metrics` and five
