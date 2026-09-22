@@ -556,9 +556,12 @@ untouched by sampling, so they carry over verbatim.
   k-mer counting, so all lanes are counted as one sample.
 - `--diploid-sampling` is the vg wiki's recommendation, and it wants ≥20x
   coverage to tell heterozygous from homozygous k-mers.
-- **`call_sv` changes meaning**: only the sampled haplotypes' SVs remain, and
-  the graph's own `.snarls` no longer applies — it has to be recomputed per
-  sample.
+- **`call_sv` changes meaning** (see *Structural variants*): only the sampled
+  haplotypes' SVs are left to genotype, and the graph's own `.snarls` no longer
+  describes the sampled graph, so it has to be recomputed per sample. Set
+  `make_snarls: true` on this workflow and pass its `snarls` output to the
+  germline run; reusing the full graph's file silently genotypes against sites
+  that sampling removed.
 
 Measured on JaSaPaGe (3.3 GB GBZ, 68 samples, 52,645 paths) and a 38x sample,
 on 32 allocated CPUs (the node exposes 16 physical cores to vg):
@@ -656,7 +659,10 @@ Notes and limits:
   Delly run on `<prefix>.bam`.
 - **`snarls` should be precomputed.** `vg snarls graph.gbz > graph.snarls` once
   per graph; without it `vg call` recomputes them on every run, which is
-  expensive on a whole-genome graph.
+  expensive on a whole-genome graph. They belong to *that* graph: running
+  against a personalized graph needs its own, which
+  `Workflows/haplotype-sample.cwl` produces with `make_snarls: true` (see
+  *Haplotype sampling*).
 - **Memory.** Every alignment block runs its own `vg pack` process, so peak
   memory grows with `align_chunks`; lower `align_chunks` when enabling
   `call_sv` on a large graph. `vg call` itself is run as a single process
