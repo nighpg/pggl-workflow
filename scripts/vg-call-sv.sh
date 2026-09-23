@@ -139,6 +139,15 @@ awk -v p="$REF_PATH_PREFIX" -v refpaths="$REF_PATHS" '
             if (substr(fld[i], 1, 3) == "SN:") { name = substr(fld[i], 4); break }
           }
           if (name == "") continue
+          # A dictionary also carries the contig lengths, and the ones vg
+          # reports are wrong for a reference stored as subranges: it gives the
+          # end of the last fragment, so every clipped tail is missing (chr9 is
+          # 83 kb short on JaSaPaGe). A VCF whose ##contig lengths disagree with
+          # the reference is rejected outright by anything that compares
+          # sequence dictionaries, so the dictionary wins.
+          for (i = 2; i <= nf; i++) {
+            if (substr(fld[i], 1, 3) == "LN:") { dictlen[strip(name)] = substr(fld[i], 4); break }
+          }
         } else {
           name = line
         }
@@ -160,7 +169,9 @@ awk -v p="$REF_PATH_PREFIX" -v refpaths="$REF_PATHS" '
     sub(/[,>].*$/, "", raw_id)
     id = strip(raw_id)
     check_subrange(id)
-    contig[id] = "##contig=<ID=" id substr(rest, length(raw_id) + 1)
+    tail = substr(rest, length(raw_id) + 1)
+    if (id in dictlen) sub(/length=[0-9]+/, "length=" dictlen[id], tail)
+    contig[id] = "##contig=<ID=" id tail
     if (!(id in seen)) { seen[id] = 1; extra[++nextra] = id }
     next
   }

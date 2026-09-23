@@ -712,6 +712,22 @@ Notes and limits:
   `ref_paths` may be either a plain path list or an HTSlib `.dict`; both are
   read here, and subrange entries (`chr1[585988]`) are folded onto the parent
   contig the VCF names.
+- **Contig lengths are taken from `ref_paths`, not from vg.** On a graph whose
+  reference is stored as subranges, the `length=` vg puts in each `##contig` is
+  the end of that contig's *last* fragment, so the clipped tail is missing --
+  measured against JaSaPaGe/GRCh38, 24 of 25 contigs came out short, by 10 kb
+  (chr1) to 83 kb (chr9). A VCF whose `##contig` lengths disagree with the
+  reference is rejected outright by anything that compares sequence
+  dictionaries, so when `ref_paths` is a `.dict` its `LN:` values are written
+  back over vg's. With a plain path list there is nothing to correct from and
+  vg's lengths are kept as-is, which is one more reason to pass the `.dict`.
+- **Subranges are resolved, unlike in pangenome-aware DeepVariant.** `vg call`
+  reports a fragmented reference against its parent contigs, the same way
+  `vg surject` does, so the `call_sv` track works on GRCh38-on-JaSaPaGe even
+  though pangenome-aware DeepVariant does not (see *Pangenome-aware calling*).
+  Verified on JaSaPaGe with `-S GRCh38`: 25 `##contig` lines, no fragment
+  names anywhere, `CHROM` = `chr1`. The subpath guard above is a safety net for
+  graphs that behave otherwise, not an expected outcome.
 - **Multi-reference graphs.** `vg call` genotypes *every* reference assembly in
   the graph by default (the default for `-p` is "all"), so a graph carrying more
   than one — e.g. JaSaPaGe, whose GBWT `reference_samples` tag is
