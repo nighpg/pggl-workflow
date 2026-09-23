@@ -3,10 +3,21 @@
 # One lane of vg giraffe: emits GAM to the workdir (lane.gam, kept only when
 # emit_gam is set) and a surjected BAM on the reference paths (lane.bam).
 #
-# When <pack_out> is given, the same GAM stream is additionally fed to
-# `vg pack` through a FIFO, so the read support needed for SV genotyping
-# (vg call) is built without ever materialising the GAM on disk. Verified to
-# produce a pack identical to `vg pack -g <lane.gam>` on the toy data.
+# When <pack_out> is given, the GAM is also kept on disk for the length of this
+# step and `vg pack` is run over it afterwards, building the read support that
+# SV genotyping (vg call) needs.
+#
+# That GAM file is not an accident of convenience: vg pack cannot read a FIFO.
+# It opens its -g argument once at startup, closes it again immediately, and
+# only reopens it after loading the GBZ -- on a whole-genome graph that is ten
+# minutes later. Streaming into a FIFO therefore breaks as soon as the graph is
+# big enough: the transient open releases the writer, the writer's first write
+# finds no reader left and dies of SIGPIPE, and giraffe follows it down the
+# pipe, while vg pack settles into an open() that never returns. Measured on
+# JaSaPaGe: giraffe and tee died 2 minutes in, vg pack was still waiting 13
+# minutes later with a zero-byte pack. A toy graph loads instantly, which is
+# why the FIFO looked fine in the fixtures, and why the disk detour is not
+# optional here.
 #
 # The BAM written here is record-identical to `vg giraffe --output-format BAM`
 # (verified for vg 1.70): surfaced reads are surjected onto the reference paths
@@ -50,24 +61,23 @@ SURJECT_ARGS=(
 [ -n "$SAMPLE" ] && GIRAFFE_ARGS+=( -N "$SAMPLE" ) && SURJECT_ARGS+=( -N "$SAMPLE" )
 
 # Extra consumers of the GAM stream, spliced in with tee. The GAM file is only
-# one of them, so emit_gam and pack_out are independent.
+# one of them, so emit_gam and pack_out are independent -- but when both are
+# set they want the same bytes, so one copy serves both and only the copy this
+# step created for itself is removed again.
 TEE_TARGETS=()
 [ "$EMIT_GAM" = "true" ] && TEE_TARGETS+=( "${LANE}.gam" )
 
-PACK_PID=
-PACK_FIFO=
+PACK_GAM=
 if [ -n "$PACK_OUT" ]; then
-  PACK_FIFO="${LANE}.pack.fifo"
-  rm -f "$PACK_FIFO"
-  mkfifo "$PACK_FIFO"
-  # Reads the FIFO for as long as tee writes to it; must be reaped before the
-  # pack file can be considered complete.
-  vg pack -x "$GBZ" -g "$PACK_FIFO" -o "$PACK_OUT" \
-      -Q "$PACK_MIN_MAPQ" -t "$THREADS" &
-  PACK_PID=$!
-  TEE_TARGETS+=( "$PACK_FIFO" )
-  # Never leave vg pack blocked on a FIFO nobody writes to when giraffe dies.
-  trap '[ -n "$PACK_PID" ] && kill "$PACK_PID" 2>/dev/null; rm -f "$PACK_FIFO"' EXIT
+  if [ "$EMIT_GAM" = "true" ]; then
+    PACK_GAM="${LANE}.gam"
+  else
+    PACK_GAM="${LANE}.pack.gam"
+    TEE_TARGETS+=( "$PACK_GAM" )
+    # A lane's GAM is tens of GB and is of no use once the pack exists, so it
+    # goes even when the step fails half-way.
+    trap 'rm -f "$PACK_GAM"' EXIT
+  fi
 fi
 
 if [ "${#TEE_TARGETS[@]}" -gt 0 ]; then
@@ -80,10 +90,11 @@ else
 fi
 
 if [ -n "$PACK_OUT" ]; then
-  wait "$PACK_PID" || { echo "vg-giraffe.sh: vg pack failed for ${LANE}" >&2; exit 1; }
-  PACK_PID=
-  rm -f "$PACK_FIFO"
+  [ -s "$PACK_GAM" ] || { echo "vg-giraffe.sh: no GAM to pack for ${LANE}" >&2; exit 1; }
+  vg pack -x "$GBZ" -g "$PACK_GAM" -o "$PACK_OUT" \
+      -Q "$PACK_MIN_MAPQ" -t "$THREADS"
   [ -s "$PACK_OUT" ] || { echo "vg-giraffe.sh: no pack produced for ${LANE}" >&2; exit 1; }
+  [ "$EMIT_GAM" = "true" ] || rm -f "$PACK_GAM"
 fi
 
 [ -s "${LANE}.bam" ] || { echo "vg-giraffe.sh: no BAM produced for ${LANE}" >&2; exit 1; }
