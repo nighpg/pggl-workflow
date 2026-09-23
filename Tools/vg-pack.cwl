@@ -2,7 +2,7 @@
 
 class: CommandLineTool
 id: vg-pack
-label: vg-pack (sum per-lane read support)
+label: vg-pack (build read support from every lane's GAM)
 cwlVersion: v1.1
 
 requirements:
@@ -22,11 +22,11 @@ baseCommand: [bash, vg-pack.sh]
 inputs:
   gbz:
     type: File
-    doc: GBZ pangenome graph the packs were built against
+    doc: GBZ pangenome graph the alignments were made against
 
-  packs:
+  gams:
     type: File[]?
-    doc: Per-lane coverage packs from the giraffe step; empty when call_sv is false, in which case no output is produced
+    doc: Per-lane graph-space GAMs from the giraffe step; empty when call_sv is false, in which case no output is produced. They are concatenated and packed in one pass rather than packed per lane and summed, because vg pack -i segfaults summing packs on a whole-genome graph.
 
   prefix:
     type: string
@@ -45,7 +45,7 @@ arguments:
   - position: 3
     valueFrom: $(inputs.threads)
   - position: 4
-    valueFrom: '$(inputs.packs != null && inputs.packs.length > 0 ? ["--packs"].concat(inputs.packs.map(function(f){ return f.path })) : [])'
+    valueFrom: '$(inputs.gams != null && inputs.gams.length > 0 ? ["--gams"].concat(inputs.gams.map(function(f){ return f.path })) : [])'
 
 outputs:
   pack:
