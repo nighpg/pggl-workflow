@@ -9,13 +9,13 @@
 # Per-block threads = ceil(threads / chunks), keeping total CPU ~constant
 # while dividing vg's peak per-process memory by `chunks`.
 #
-# With <call_sv> set, every block also builds a `vg pack` coverage index from
-# its own GAM, and the per-block packs are summed into one lane pack with
-# `vg pack -i`; summing is exact, so the lane pack equals a pack built from the
-# unsharded GAM. vg pack runs after that block's giraffe rather than alongside
-# it (see vg-giraffe.sh on why the GAM goes via disk), so peak memory per block
-# is the larger of the two, not their sum -- but each block holds its own GAM
-# on disk in the meantime, tens of GB at whole-genome depth.
+# With <call_sv> set the lane GAM is kept whether or not <emit_gam> asked for
+# it, because the SV track packs it later. Nothing is packed here: `vg pack -i`,
+# the obvious way to sum per-block coverage, segfaults in collect_coverage on a
+# whole-genome graph (measured on JaSaPaGe, with one thread as well as 32), so
+# the packing is done once, at the end, over every lane's GAM concatenated --
+# which is the thing summing packs was only ever an optimisation for. GAM is a
+# concatenable stream, so `cat` is all a lane needs.
 #
 # Usage: giraffe-sharded.sh <gbz> <dist> <min> <zipcodes> <ref_paths>
 #              <threads> <read_group> <sample> <fq1> <fq2> <lane> <emit_gam>
@@ -72,14 +72,16 @@ if [ "$A" -ne 0 ]; then
     exit 1
 fi
 
+# A block writes its GAM when the caller wants one and when the SV track does.
+KEEP_GAM=$EMIT_GAM
+[ "$CALL_SV" = "true" ] && KEEP_GAM=true
+
 pids=()
 for i in $(seq 1 "$CHUNKS"); do
     (
-        PACK_ARG=""
-        [ "$CALL_SV" = "true" ] && PACK_ARG="${LANE}.c${i}.pack"
         bash vg-giraffe.sh "$GBZ" "$DIST" "$MIN" "$ZIP" "$REF_PATHS" \
             "$CTHREADS" "$RG" "$SM" "shards/c${i}.fq1" "shards/c${i}.fq2" \
-            "${LANE}.c${i}" "$EMIT_GAM" "$PACK_ARG"
+            "${LANE}.c${i}" "$KEEP_GAM"
     ) &
     pids+=("$!")
 done
@@ -99,28 +101,20 @@ for i in $(seq 1 "$CHUNKS"); do
 done
 samtools cat -o "${LANE}.bam" "${bams[@]}"
 
-if [ "$EMIT_GAM" = "true" ]; then
-    rm -f "${LANE}.gam"
-    for i in $(seq 1 "$CHUNKS"); do
-        cat "${LANE}.c${i}.gam" >> "${LANE}.gam"
-    done
-fi
-
-if [ "$CALL_SV" = "true" ]; then
+if [ "$KEEP_GAM" = "true" ]; then
     if [ "$CHUNKS" -eq 1 ]; then
-        mv "${LANE}.c1.pack" "${LANE}.pack"
+        mv "${LANE}.c1.gam" "${LANE}.gam"
     else
-        packs=()
+        rm -f "${LANE}.gam"
         for i in $(seq 1 "$CHUNKS"); do
-            packs+=( -i "${LANE}.c${i}.pack" )
+            cat "${LANE}.c${i}.gam" >> "${LANE}.gam"
         done
-        vg pack -x "$GBZ" "${packs[@]}" -o "${LANE}.pack" -t "$THREADS"
     fi
-    [ -s "${LANE}.pack" ] || { echo "giraffe-sharded.sh: no pack produced for ${LANE}" >&2; exit 1; }
+    [ -s "${LANE}.gam" ] || { echo "giraffe-sharded.sh: no GAM produced for ${LANE}" >&2; exit 1; }
 fi
 
 for i in $(seq 1 "$CHUNKS"); do
-    rm -f "${LANE}.c${i}.bam" "${LANE}.c${i}.gam" "${LANE}.c${i}.pack"
+    rm -f "${LANE}.c${i}.bam" "${LANE}.c${i}.gam"
 done
 rm -rf shards
 

@@ -96,7 +96,7 @@ inputs:
 
   emit_gam:
     type: boolean?
-    doc: Keep the per-lane graph-space GAM (lane.gam). When false only the surjected BAM is kept.
+    doc: Keep the per-lane graph-space GAM (lane.gam) as a workflow output. When false only the surjected BAM is kept -- unless call_sv is set, which needs the GAM regardless and takes it through the pack_gam output instead.
     default: false
 
   chunks:
@@ -108,7 +108,7 @@ inputs:
 
   call_sv:
     type: boolean?
-    doc: Also build the vg pack read support needed to genotype the graph's SVs. The pack is produced from the same one-pass GAM stream (no GAM is written to disk), but each block runs its own vg pack process, so peak memory grows with chunks.
+    doc: Keep this lane's GAM so the SV track can pack it. Nothing is packed here; the packing is done once for the whole sample, over every lane's GAM concatenated, because vg pack -i segfaults summing per-lane packs on a whole-genome graph.
     default: false
 
 arguments:
@@ -128,10 +128,13 @@ outputs:
     type: File?
     doc: Per-lane graph-space alignment in GAM format (kept only when emit_gam is set)
     outputBinding:
-      glob: $(inputs.lane).gam
+      # The file also exists when only call_sv asked for it, and that copy
+      # belongs to pack_gam, not to the workflow's gam output -- so glob a name
+      # that cannot match unless emit_gam really was set.
+      glob: '$(inputs.emit_gam ? inputs.lane + ".gam" : "emit-gam-was-not-set")'
 
-  pack:
+  pack_gam:
     type: File?
-    doc: Per-lane read support for vg call (produced only when call_sv is set)
+    doc: Per-lane graph-space alignment handed to the sample-wide vg pack (produced only when call_sv is set)
     outputBinding:
-      glob: $(inputs.lane).pack
+      glob: '$(inputs.call_sv ? inputs.lane + ".gam" : "call-sv-was-not-set")'

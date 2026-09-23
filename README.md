@@ -678,12 +678,10 @@ cwltool --no-container --parallel --outdir out/ Workflows/germline-pangenome-cpu
   --call_sv --snarls graph.snarls --sv_min_length 50
 ```
 
-How it works: each `vg giraffe` block keeps its GAM on disk for the length of
-the step and `vg pack` reads it once giraffe is done; the per-block packs are
-summed with `vg pack -i` into one lane pack, the lane packs are summed into one
-sample pack, and `vg call -z -c <sv_min_length>` genotypes it against the GBZ.
-Summing packs is exact — the sample pack is identical to one built from a
-single GAM holding every lane's alignments.
+How it works: each `vg giraffe` block keeps its GAM, the blocks of a lane are
+concatenated into one lane GAM, every lane's GAM is concatenated in turn, and a
+single `vg pack` pass over that builds the sample's read support, which
+`vg call -z -c <sv_min_length>` then genotypes against the GBZ.
 
 Notes and limits:
 
@@ -697,24 +695,36 @@ Notes and limits:
   against a personalized graph needs its own, which
   `Workflows/haplotype-sample.cwl` produces with `make_snarls: true` (see
   *Haplotype sampling*).
-- **The GAM goes via disk, and it has to.** `vg pack` cannot read a FIFO: it
+- **Packing is one pass over the concatenated GAM, not a sum of packs.**
+  `vg pack -i`, which sums coverage packs, segfaults in
+  `vg::Packer::collect_coverage` on a whole-genome graph — reproduced on
+  JaSaPaGe with two packs, with `-Q` and without it, and at one thread as well
+  as 32, so it is neither a race nor a quality-vector mismatch. GAM is a
+  concatenable stream, so the lanes are joined with `cat` and packed once,
+  which is the definition the sum was approximating. Verified equivalent on the
+  toy graph, where `vg pack -i` does work: the two routes give byte-different
+  packs whose coverage tables are identical.
+- **`vg pack` cannot read a FIFO**, which is why the GAM is on disk at all. It
   opens its `-g` argument at startup, closes it again within a second, and only
   reopens it after loading the GBZ — ten minutes later on a whole-genome graph.
-  Streaming giraffe into it therefore deadlocks as soon as the graph is big
-  enough. Measured on JaSaPaGe: the transient open released `tee`, `tee`'s
-  first write found no reader and died of `SIGPIPE`, `vg giraffe` followed it
-  down the pipe two minutes in, and `vg pack` was still blocked in `open()`
-  thirteen minutes later with a zero-byte pack. A toy graph loads instantly, so
-  the fixtures never showed it. Budget disk accordingly: each alignment block
-  holds its own lane GAM until its pack is written, about 13 GB per lane at 30x
-  with `align_chunks=1`, and it is deleted as soon as the pack exists (unless
-  `emit_gam` asked to keep it).
-- **Memory.** `vg pack` runs after its block's `vg giraffe`, not alongside it,
-  so a block peaks at the larger of the two (~70 GB each on JaSaPaGe) rather
-  than their sum, and `align_chunks` multiplies that. `vg call` itself is run
-  as a single process threaded with `-t`: scattering it per contig would make
-  every job load the whole GBZ and snarls, multiplying memory by the contig
-  count instead of dividing the work.
+  Streaming giraffe into it deadlocks as soon as the graph is big enough:
+  measured on JaSaPaGe, the transient open released `tee`, `tee`'s first write
+  found no reader and died of `SIGPIPE`, `vg giraffe` followed it down the pipe
+  two minutes in, and `vg pack` was still blocked in `open()` thirteen minutes
+  later with a zero-byte pack. A toy graph loads instantly, so the fixtures
+  never showed either of these.
+- **Disk.** Every lane's GAM has to survive until the sample pack is built —
+  about 13 GB per lane at 30x, so ~156 GB for a 12-lane sample — and the
+  concatenated copy doubles that at the moment of packing. Both are removed
+  once the pack exists (the lane GAMs are kept only if `emit_gam` asked for
+  them).
+- **Memory.** Nothing is packed alongside `vg giraffe` any more, so an
+  alignment block peaks at giraffe alone (~70 GB on JaSaPaGe) and
+  `align_chunks` multiplies that; the single packing pass peaks at about the
+  same figure on its own. `vg call` is likewise run as one process threaded
+  with `-t`: scattering it per contig would make every job load the whole GBZ
+  and snarls, multiplying memory by the contig count instead of dividing the
+  work.
 - **Contig names.** `vg call` writes plain contig names in the `CHROM` column but
   keeps the full PanSN path name in the `##contig` headers; the workflow strips
   `ref_path_prefix` from both so the VCF lines up with the BAM and the interval
