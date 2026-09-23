@@ -10,10 +10,12 @@
 # while dividing vg's peak per-process memory by `chunks`.
 #
 # With <call_sv> set, every block also builds a `vg pack` coverage index from
-# its own GAM stream (no GAM on disk) and the per-block packs are summed into
-# one lane pack with `vg pack -i`; summing is exact, so the lane pack equals a
-# pack built from the unsharded GAM. Note that each block then runs its own
-# vg pack process, so enabling this multiplies peak memory by <chunks>.
+# its own GAM, and the per-block packs are summed into one lane pack with
+# `vg pack -i`; summing is exact, so the lane pack equals a pack built from the
+# unsharded GAM. vg pack runs after that block's giraffe rather than alongside
+# it (see vg-giraffe.sh on why the GAM goes via disk), so peak memory per block
+# is the larger of the two, not their sum -- but each block holds its own GAM
+# on disk in the meantime, tens of GB at whole-genome depth.
 #
 # Usage: giraffe-sharded.sh <gbz> <dist> <min> <zipcodes> <ref_paths>
 #              <threads> <read_group> <sample> <fq1> <fq2> <lane> <emit_gam>

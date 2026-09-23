@@ -136,7 +136,7 @@ inputs:
 
   call_sv:
     type: boolean
-    doc: Genotype the structural variants that are embedded in the pangenome graph (vg pack + vg call) and emit <prefix>.sv.vcf.gz. This only genotypes variation present in the graph; vg cannot discover novel SVs, so novel events still need a linear caller on <prefix>.bam. Off by default because it adds a vg pack process per alignment block.
+    doc: Genotype the structural variants that are embedded in the pangenome graph (vg pack + vg call) and emit <prefix>.sv.vcf.gz. This only genotypes variation present in the graph; vg cannot discover novel SVs, so novel events still need a linear caller on <prefix>.bam. Off by default because it adds a vg pack pass per alignment block and keeps that block's GAM on disk until the pack is written.
     default: false
 
   snarls:

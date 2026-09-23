@@ -678,12 +678,12 @@ cwltool --no-container --parallel --outdir out/ Workflows/germline-pangenome-cpu
   --call_sv --snarls graph.snarls --sv_min_length 50
 ```
 
-How it works: each `vg giraffe` block feeds its GAM stream to `vg pack` through
-a FIFO, so the read support is built **without ever writing the GAM to disk**;
-the per-block packs are summed with `vg pack -i` into one lane pack, the lane
-packs are summed into one sample pack, and `vg call -z -c <sv_min_length>`
-genotypes it against the GBZ. Summing packs is exact — the sample pack is
-identical to one built from a single GAM holding every lane's alignments.
+How it works: each `vg giraffe` block keeps its GAM on disk for the length of
+the step and `vg pack` reads it once giraffe is done; the per-block packs are
+summed with `vg pack -i` into one lane pack, the lane packs are summed into one
+sample pack, and `vg call -z -c <sv_min_length>` genotypes it against the GBZ.
+Summing packs is exact — the sample pack is identical to one built from a
+single GAM holding every lane's alignments.
 
 Notes and limits:
 
@@ -697,12 +697,24 @@ Notes and limits:
   against a personalized graph needs its own, which
   `Workflows/haplotype-sample.cwl` produces with `make_snarls: true` (see
   *Haplotype sampling*).
-- **Memory.** Every alignment block runs its own `vg pack` process, so peak
-  memory grows with `align_chunks`; lower `align_chunks` when enabling
-  `call_sv` on a large graph. `vg call` itself is run as a single process
-  threaded with `-t`: scattering it per contig would make every job load the
-  whole GBZ and snarls, multiplying memory by the contig count instead of
-  dividing the work.
+- **The GAM goes via disk, and it has to.** `vg pack` cannot read a FIFO: it
+  opens its `-g` argument at startup, closes it again within a second, and only
+  reopens it after loading the GBZ — ten minutes later on a whole-genome graph.
+  Streaming giraffe into it therefore deadlocks as soon as the graph is big
+  enough. Measured on JaSaPaGe: the transient open released `tee`, `tee`'s
+  first write found no reader and died of `SIGPIPE`, `vg giraffe` followed it
+  down the pipe two minutes in, and `vg pack` was still blocked in `open()`
+  thirteen minutes later with a zero-byte pack. A toy graph loads instantly, so
+  the fixtures never showed it. Budget disk accordingly: each alignment block
+  holds its own lane GAM until its pack is written, about 13 GB per lane at 30x
+  with `align_chunks=1`, and it is deleted as soon as the pack exists (unless
+  `emit_gam` asked to keep it).
+- **Memory.** `vg pack` runs after its block's `vg giraffe`, not alongside it,
+  so a block peaks at the larger of the two (~70 GB each on JaSaPaGe) rather
+  than their sum, and `align_chunks` multiplies that. `vg call` itself is run
+  as a single process threaded with `-t`: scattering it per contig would make
+  every job load the whole GBZ and snarls, multiplying memory by the contig
+  count instead of dividing the work.
 - **Contig names.** `vg call` writes plain contig names in the `CHROM` column but
   keeps the full PanSN path name in the `##contig` headers; the workflow strips
   `ref_path_prefix` from both so the VCF lines up with the BAM and the interval
