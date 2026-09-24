@@ -230,6 +230,7 @@ steps:
       PAR_interval: PAR_interval
       chrX_interval: chrX_interval
       chrY_interval: chrY_interval
+      ref: ref
     out:
       - sv_vcf
       - sv_vcf_chrX_female

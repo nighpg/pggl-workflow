@@ -12,6 +12,9 @@ requirements:
       - class: File
         location: ../scripts/vg-call-sv.sh
         basename: vg-call-sv.sh
+      - class: File
+        location: ../scripts/annotate-sv-type.py
+        basename: annotate-sv-type.py
 
 hints:
   DockerRequirement:
@@ -51,6 +54,18 @@ inputs:
   chrY_interval:
     type: File?
     doc: BED of chrY outside PAR
+
+  ref:
+    type: File?
+    doc: |
+      Linear reference FASTA (+ .fai). When it is given, the VCFs gain
+      SVTYPE/SVLEN/SVSIM, saying whether each ALT is an inversion, a tandem
+      duplication, a dispersed insertion or a deletion. vg call writes explicit
+      sequences and no symbolic ALT, so the event kind is otherwise unlabelled,
+      and an inversion barely changes length, so without SVTYPE a filter on
+      |ALT-REF| discards nearly all of them.
+    secondaryFiles:
+      - .fai
 
   prefix:
     type: string
@@ -101,6 +116,8 @@ arguments:
     valueFrom: '$(inputs.chrX_interval != null ? ["--chrx-bed", inputs.chrX_interval.path] : [])'
   - position: 12
     valueFrom: '$(inputs.chrY_interval != null ? ["--chry-bed", inputs.chrY_interval.path] : [])'
+  - position: 13
+    valueFrom: '$(inputs.ref != null ? ["--ref", inputs.ref.path] : [])'
 
 outputs:
   sv_vcf:
