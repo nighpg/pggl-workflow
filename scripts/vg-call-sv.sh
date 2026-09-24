@@ -64,7 +64,7 @@
 # Usage: vg-call-sv.sh <gbz> <prefix> <sample> <threads> <min_length>
 #                      <ref_path_prefix> [--ref-paths <file>] [--snarls <file>]
 #                      [--pack <file>] [--par-bed <file>] [--chrx-bed <file>]
-#                      [--chry-bed <file>]
+#                      [--chry-bed <file>] [--ref <fasta>]
 set -euo pipefail
 
 GBZ=$1
@@ -81,6 +81,7 @@ REF_PATHS=
 PAR_BED=
 CHRX_BED=
 CHRY_BED=
+REF_FASTA=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --ref-paths)
@@ -97,6 +98,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --chry-bed)
       CHRY_BED=$2
+      shift 2
+      ;;
+    --ref)
+      REF_FASTA=$2
       shift 2
       ;;
     --snarls)
@@ -248,6 +253,21 @@ call_pass() {
 MAIN="${PREFIX}.sv.vcf.gz"
 count() { bcftools view -H "$1" | wc -l; }
 
+# vg call writes explicit REF/ALT sequences and no symbolic <INV>/<DUP>, so the
+# kind of event a record describes is there but unlabelled -- and an inversion
+# barely changes length, so filtering the VCF on |ALT-REF| discards almost all
+# of them (86% on NA18945, median length difference 3 bp) while the 6 kb event
+# stays invisible. Recover the types from the sequences when a reference is
+# given to compare insertions against.
+annotate() {
+  local vcf=$1
+  [ -n "$REF_FASTA" ] || return 0
+  python3 annotate-sv-type.py "$vcf" "$REF_FASTA" "$MIN_LENGTH" annotated.vcf
+  bcftools view -O z -o "$vcf" annotated.vcf
+  bcftools index -f -t "$vcf"
+  rm -f annotated.vcf
+}
+
 call_pass diploid.vcf.gz
 
 # No intervals to split on: leave the whole genome in one diploid file, which
@@ -255,6 +275,7 @@ call_pass diploid.vcf.gz
 if [ -z "$PAR_BED" ] || [ -z "$CHRX_BED" ] || [ -z "$CHRY_BED" ]; then
     mv diploid.vcf.gz "$MAIN"
     mv diploid.vcf.gz.tbi "${MAIN}.tbi"
+    annotate "$MAIN"
     rm -f normalise.awk
     echo "genotyped $(count "$MAIN") SV sites (>= ${MIN_LENGTH} bp); no interval BEDs given, so chrX and chrY stay at ploidy 2" >&2
     exit 0
@@ -275,6 +296,7 @@ bcftools view -O z -o par.vcf.gz -R "$PAR_BED" diploid.vcf.gz
 bcftools index -t par.vcf.gz
 bcftools concat -a -O z -o "$MAIN" auto.vcf.gz par.vcf.gz
 bcftools index -t "$MAIN"
+annotate "$MAIN"
 
 for spec in "chrX_female:$CHRX_BED:diploid.vcf.gz" \
             "chrX_male:$CHRX_BED:haploid.vcf.gz" \
@@ -283,6 +305,7 @@ for spec in "chrX_female:$CHRX_BED:diploid.vcf.gz" \
     bed=${rest%%:*}; src=${rest#*:}
     bcftools view -O z -o "${PREFIX}.sv.${name}.vcf.gz" -R "$bed" "$src"
     bcftools index -t "${PREFIX}.sv.${name}.vcf.gz"
+    annotate "${PREFIX}.sv.${name}.vcf.gz"
 done
 
 rm -f diploid.vcf.gz diploid.vcf.gz.tbi haploid.vcf.gz haploid.vcf.gz.tbi \

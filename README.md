@@ -718,6 +718,41 @@ pass. The cost is one more `vg call`: measured at 22 minutes on JaSaPaGe
 against a 12 h 43 m whole run, so about +3%. The pack is ploidy-independent and
 is reused, not rebuilt.
 
+**Inversions and duplications are called, but not labelled.** `vg call` writes
+REF and ALT as explicit sequences and never emits a symbolic `<INV>` or
+`<DUP>`, so the kind of event a record describes is present in the sequences
+but carries no name. When `ref` is given, the step recovers it and writes
+`SVTYPE`, `SVLEN` and `SVSIM` (all `Number=A`, so a multi-allelic site gets one
+value per ALT):
+
+| `SVTYPE` | Recovered from |
+| --- | --- |
+| `INV` | the ALT matches the reverse complement of the REF and not the REF |
+| `DUP` | the inserted sequence is a copy of the reference beside it |
+| `INS` | the inserted sequence is unrelated to its flanks |
+| `DEL` | the ALT is shorter than the REF by at least `sv_min_length` |
+
+`SVSIM` carries the 31-mer similarity the call rests on, so a threshold can be
+tightened afterwards without recomputing anything. Measured on NA18945 (57,531
+records, whole genome, 27 s):
+
+| `SVTYPE` | Called alleles | Median `GQ` | `GQ` ≥ 10 |
+| --- | ---: | ---: | ---: |
+| `DEL` | 16,673 | 10 | 50% |
+| `INS` | 12,542 | 0 | 28% |
+| `DUP` | 2,633 | 9 | 47% |
+| `INV` | 21 | 0 | 5% |
+| `.` (under `sv_min_length`) | 42,010 | 1 | 28% |
+
+**Filtering on length alone loses the inversions.** An inversion barely changes
+length — on NA18945 the median length difference of one was 3 bp, and 86% were
+under 50 bp — so `|ALT-REF| >= 50` throws away a 6 kb event as if it were a
+3 bp indel. That is why the inversions above sit in the `.` bucket by length
+and can only be found through `SVTYPE`. Their genotypes are the least reliable
+of any class (median `GQ` 0): inversions sit in segmental duplications and
+palindromes, where short reads cannot anchor either breakpoint uniquely, so
+treat `INV` as a location to follow up rather than a genotype to use.
+
 Notes and limits:
 
 - **`sv_min_length` filters snarls, not alleles.** `vg call -c N` genotypes
