@@ -53,7 +53,7 @@ own, documented under *Haplotype sampling*.
 | `threads` | `int` | CPU threads (default 32) |
 | `emit_gam` | `boolean` | Keep the per-lane graph-space alignments (`<prefix>.<lane>.gam`) as workflow outputs (default `false`). Adds one GAM write per lane; the BAM is always produced from the same one-pass via `vg surject` |
 | `keep_bam` | `boolean` | Materialise the final duplicate-marked `<prefix>.bam` (+`.bai`) in the output directory (default `true`). Set `false` to skip it; the BAM is still built internally because DeepVariant requires it |
-| `call_sv` | `boolean` | Genotype the SVs embedded in the pangenome graph (`vg pack` + `vg call`) and emit `<prefix>.sv.vcf.gz` (default `false`) |
+| `call_sv` | `boolean` | Genotype the SVs embedded in the pangenome graph (`vg pack` + `vg call`) and emit `<prefix>.sv.vcf.gz` plus the per-sex chrX/chrY files (default `false`) |
 | `snarls` | `File` | Precomputed snarls for the graph (`vg snarls`); optional but strongly recommended for whole-genome graphs. Ignored when `call_sv` is false |
 | `sv_min_length` | `int` | Minimum graph-site traversal length to be genotyped as an SV (`vg call -c`, default 50) |
 | `ref_name_pangenome` | `string` | *Pangenome-aware workflow only.* PanSN sample name of the reference inside the GBZ (`GRCh38`, `CHM13v2`); must name the assembly the BAM is in |
@@ -70,7 +70,10 @@ own, documented under *Haplotype sampling*.
 <prefix>.chrX_male.g.vcf.gz      (+ .tbi)  haploid (--haploid-contigs chrX)
 <prefix>.chrY.g.vcf.gz           (+ .tbi)  haploid (--haploid-contigs chrY)
 <prefix>.<lane>.gam                           per-lane graph-space alignment (only when emit_gam=true)
-<prefix>.sv.vcf.gz               (+ .tbi)  genotyped graph SVs (only when call_sv=true)
+<prefix>.sv.vcf.gz               (+ .tbi)  genotyped graph SVs, autosomes + PAR, diploid (only when call_sv=true)
+<prefix>.sv.chrX_female.vcf.gz   (+ .tbi)  diploid   (chrX outside PAR)
+<prefix>.sv.chrX_male.vcf.gz     (+ .tbi)  haploid   (chrX outside PAR)
+<prefix>.sv.chrY.vcf.gz          (+ .tbi)  haploid
 ```
 
 ## Preparing a graph
@@ -683,8 +686,46 @@ concatenated into one lane GAM, every lane's GAM is concatenated in turn, and a
 single `vg pack` pass over that builds the sample's read support, which
 `vg call -z -c <sv_min_length>` then genotypes against the GBZ.
 
+**Ploidy and the sex chromosomes.** `vg call` has one ploidy for the whole run,
+so a single pass cannot be right for both the autosomes and a male chrX. The
+same pack is therefore called twice — once at the default ploidy 2, once with
+`-d 1` — and each region is taken from the pass with the right ploidy for it:
+
+| File | Region | Ploidy | From |
+| --- | --- | --- | --- |
+| `<prefix>.sv.vcf.gz` | autosomes + PAR | diploid | pass 1 |
+| `<prefix>.sv.chrX_female.vcf.gz` | chrX outside PAR | diploid | pass 1 |
+| `<prefix>.sv.chrX_male.vcf.gz` | chrX outside PAR | haploid | pass 2 |
+| `<prefix>.sv.chrY.vcf.gz` | chrY outside PAR | haploid | pass 2 |
+
+Both sexes are emitted and neither is chosen, exactly as the gVCFs are: the
+sample's sex is not a workflow input. This matters — on NA18945, whose chrX
+read depth is exactly half the autosomal one (median DP 10 against 20), a
+single diploid pass called **47.6% of chrX SVs heterozygous**, which a haploid
+chromosome cannot be. The regions come from `PAR_interval`, `chrX_interval` and
+`chrY_interval`, the same BEDs DeepVariant is given; leave all three out and
+the step falls back to one whole-genome diploid file. The contig names are read
+from the BEDs rather than assumed, so a differently named reference still
+works.
+
+The haploid pass uses `-d 1` rather than `-R <contig>:1`. `-R` assigns ploidy
+per contig by regex and could do both in one pass, but on a graph whose
+reference is stored as PanSN subranges the name it matches against is the
+fragment (`GRCh38#0#chrX[2781479]`), and whether the regex sees that or the
+resolved parent is not documented. `-d 1` makes the whole pass haploid, which
+is wrong for the autosomes — but nothing is taken from the autosomes of that
+pass. The cost is one more `vg call`: measured at 22 minutes on JaSaPaGe
+against a 12 h 43 m whole run, so about +3%. The pack is ploidy-independent and
+is reused, not rebuilt.
+
 Notes and limits:
 
+- **`sv_min_length` filters snarls, not alleles.** `vg call -c N` genotypes
+  every snarl that has *a traversal* of at least N bases; the alleles it then
+  reports for that snarl can be much smaller. On NA18945 only 28,927 of the
+  57,531 records had a called allele of 50 bp or more — the rest are small
+  variants sitting inside a snarl that also holds a large one. Filter on the
+  allele length if SVs are what is wanted.
 - **Only variation present in the graph is genotyped.** vg cannot discover novel
   SVs (its own documentation states that augmentation-based de novo calling does
   not work for SVs), so novel events still need a linear caller such as Manta or

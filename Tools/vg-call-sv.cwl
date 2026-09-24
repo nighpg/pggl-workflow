@@ -40,9 +40,21 @@ inputs:
     type: File?
     doc: Precomputed snarls (vg snarls) for this graph. Optional but strongly recommended for whole-genome graphs, where recomputing them on every run is expensive.
 
+  PAR_interval:
+    type: File?
+    doc: BED of the pseudoautosomal regions. Given together with chrX_interval and chrY_interval, the sex chromosomes are split out into their own files at the right ploidy; leave all three out to keep one whole-genome diploid VCF.
+
+  chrX_interval:
+    type: File?
+    doc: BED of chrX outside PAR. The contig name is taken from this file rather than assumed, so a reference that names chrX differently still works.
+
+  chrY_interval:
+    type: File?
+    doc: BED of chrY outside PAR
+
   prefix:
     type: string
-    doc: Output file prefix; produces <prefix>.sv.vcf.gz (+ .tbi)
+    doc: Output file prefix; produces <prefix>.sv.vcf.gz plus the per-sex files (+ .tbi)
 
   sample:
     type: string
@@ -83,12 +95,42 @@ arguments:
     valueFrom: '$(inputs.snarls != null ? ["--snarls", inputs.snarls.path] : [])'
   - position: 9
     valueFrom: '$(inputs.pack != null ? ["--pack", inputs.pack.path] : [])'
+  - position: 10
+    valueFrom: '$(inputs.PAR_interval != null ? ["--par-bed", inputs.PAR_interval.path] : [])'
+  - position: 11
+    valueFrom: '$(inputs.chrX_interval != null ? ["--chrx-bed", inputs.chrX_interval.path] : [])'
+  - position: 12
+    valueFrom: '$(inputs.chrY_interval != null ? ["--chry-bed", inputs.chrY_interval.path] : [])'
 
 outputs:
   sv_vcf:
     type: File?
-    doc: Genotyped structural variants in reference coordinates (null when SV calling is disabled)
+    doc: Genotyped structural variants of the autosomes and PAR, diploid, in reference coordinates (null when SV calling is disabled). Holds the whole genome when the interval BEDs are not given.
     outputBinding:
       glob: $(inputs.prefix).sv.vcf.gz
+    secondaryFiles:
+      - pattern: ".tbi"
+
+  sv_vcf_chrX_female:
+    type: File?
+    doc: chrX outside PAR, genotyped as a diploid
+    outputBinding:
+      glob: $(inputs.prefix).sv.chrX_female.vcf.gz
+    secondaryFiles:
+      - pattern: ".tbi"
+
+  sv_vcf_chrX_male:
+    type: File?
+    doc: chrX outside PAR, genotyped as a haploid
+    outputBinding:
+      glob: $(inputs.prefix).sv.chrX_male.vcf.gz
+    secondaryFiles:
+      - pattern: ".tbi"
+
+  sv_vcf_chrY:
+    type: File?
+    doc: chrY outside PAR, genotyped as a haploid
+    outputBinding:
+      glob: $(inputs.prefix).sv.chrY.vcf.gz
     secondaryFiles:
       - pattern: ".tbi"
