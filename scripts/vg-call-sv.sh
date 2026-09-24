@@ -1,8 +1,36 @@
 #!/usr/bin/env bash
 #
 # Genotypes the structural variants that are embedded in the pangenome graph,
-# from the read support built by vg pack, and writes them as a bgzipped,
-# tabix-indexed VCF in reference coordinates (<prefix>.sv.vcf.gz).
+# from the read support built by vg pack, and writes them as bgzipped,
+# tabix-indexed VCFs in reference coordinates.
+#
+# vg call has one ploidy for the whole run, so the sex chromosomes cannot come
+# out right in a single pass: at the default ploidy 2 a male chrX is genotyped
+# as a diploid and roughly half its sites are called heterozygous, which on a
+# haploid chromosome they cannot be (measured on NA18945: 47.6% of chrX SVs
+# het, against a chrX read depth exactly half the autosomal one). So the same
+# pack is called twice -- once diploid, once with -d 1 -- and the regions are
+# taken from whichever pass has the right ploidy for them:
+#
+#   <prefix>.sv.vcf.gz               autosomes + PAR          diploid
+#   <prefix>.sv.chrX_female.vcf.gz   chrX outside PAR         diploid
+#   <prefix>.sv.chrX_male.vcf.gz     chrX outside PAR         haploid
+#   <prefix>.sv.chrY.vcf.gz          chrY                     haploid
+#
+# Both sexes are emitted and neither is chosen here, exactly as the gVCF side
+# of the workflow does: the sample's sex is not an input, and guessing it from
+# coverage is the caller's business, not this step's.
+#
+# -d 1 rather than -R <contig>:1 for the haploid pass: -R assigns ploidy per
+# contig by regex and so could do both in one pass, but on a graph whose
+# reference is stored as PanSN subranges the contig it matches against is the
+# fragment name (GRCh38#0#chrX[2781479]), and whether the regex is applied
+# before or after that is resolved is not documented. -d 1 makes the whole pass
+# haploid, which is wrong for the autosomes -- but nothing is taken from the
+# autosomes of that pass, so it does not matter, and it has no such dependency.
+#
+# Without the three interval BEDs there is nothing to split on, so the run
+# falls back to one whole-genome diploid <prefix>.sv.vcf.gz and no sex files.
 #
 # `vg call -z` restricts the genotypes to the haplotypes stored in the GBZ,
 # which is both faster and more accurate than calling arbitrary traversals, and
@@ -35,7 +63,8 @@
 #
 # Usage: vg-call-sv.sh <gbz> <prefix> <sample> <threads> <min_length>
 #                      <ref_path_prefix> [--ref-paths <file>] [--snarls <file>]
-#                      [--pack <file>]
+#                      [--pack <file>] [--par-bed <file>] [--chrx-bed <file>]
+#                      [--chry-bed <file>]
 set -euo pipefail
 
 GBZ=$1
@@ -49,10 +78,25 @@ shift 6
 SNARLS=
 PACK=
 REF_PATHS=
+PAR_BED=
+CHRX_BED=
+CHRY_BED=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --ref-paths)
       REF_PATHS=$2
+      shift 2
+      ;;
+    --par-bed)
+      PAR_BED=$2
+      shift 2
+      ;;
+    --chrx-bed)
+      CHRX_BED=$2
+      shift 2
+      ;;
+    --chry-bed)
+      CHRY_BED=$2
       shift 2
       ;;
     --snarls)
@@ -97,12 +141,10 @@ CALL_ARGS=(
 REF_SAMPLE=${REF_PATH_PREFIX%%#*}
 [ -n "$REF_SAMPLE" ] && CALL_ARGS+=( -S "$REF_SAMPLE" )
 
-vg call "${CALL_ARGS[@]}" > raw.vcf
-
-# Strip the PanSN prefix from the ##contig headers and, defensively, from the
-# CHROM column too (a no-op when vg already wrote plain names there), then
-# re-emit the ##contig block in ref_paths order.
-awk -v p="$REF_PATH_PREFIX" -v refpaths="$REF_PATHS" '
+# The normaliser is shared by both passes. It goes to a file rather than a
+# shell variable because it is full of $0 and $1, which a double-quoted
+# variable would hand to bash instead of to awk.
+cat > normalise.awk <<'NORMALISE_AWK'
   function strip(s) {
     return (n > 0 && substr(s, 1, n) == p) ? substr(s, n + 1) : s
   }
@@ -188,13 +230,66 @@ awk -v p="$REF_PATH_PREFIX" -v refpaths="$REF_PATHS" '
   }
   /^#/ { print; next }
   { $1 = strip($1); check_subrange($1); print }
-' raw.vcf > fixed.vcf
+NORMALISE_AWK
 
-OUT="${PREFIX}.sv.vcf.gz"
-bcftools sort -O z -o "$OUT" fixed.vcf
-bcftools index -t "$OUT"
+# One vg call pass: genotype, normalise the contig names and order, sort, index.
+# Usage: call_pass <out.vcf.gz> [extra vg call args...]
+call_pass() {
+  local out=$1
+  shift
+  vg call "${CALL_ARGS[@]}" "$@" > raw.vcf
+  awk -v p="$REF_PATH_PREFIX" -v refpaths="$REF_PATHS" -f normalise.awk raw.vcf > fixed.vcf
+  bcftools sort -O z -o "$out" fixed.vcf
+  bcftools index -t "$out"
+  rm -f raw.vcf fixed.vcf
+  [ -s "$out" ] || { echo "vg-call-sv.sh: no output produced for $out" >&2; exit 1; }
+}
 
-rm -f raw.vcf fixed.vcf
+MAIN="${PREFIX}.sv.vcf.gz"
+count() { bcftools view -H "$1" | wc -l; }
 
-[ -s "$OUT" ] || { echo "vg-call-sv.sh: no output produced" >&2; exit 1; }
-echo "genotyped $(bcftools view -H "$OUT" | wc -l) SV sites (>= ${MIN_LENGTH} bp)" >&2
+call_pass diploid.vcf.gz
+
+# No intervals to split on: leave the whole genome in one diploid file, which
+# is what this step did before the sex chromosomes were separated out.
+if [ -z "$PAR_BED" ] || [ -z "$CHRX_BED" ] || [ -z "$CHRY_BED" ]; then
+    mv diploid.vcf.gz "$MAIN"
+    mv diploid.vcf.gz.tbi "${MAIN}.tbi"
+    rm -f normalise.awk
+    echo "genotyped $(count "$MAIN") SV sites (>= ${MIN_LENGTH} bp); no interval BEDs given, so chrX and chrY stay at ploidy 2" >&2
+    exit 0
+fi
+
+call_pass haploid.vcf.gz -d 1
+
+# The sex chromosomes are named by the BEDs rather than hardcoded here, so a
+# reference that names them differently still works.
+XNAME=$(cut -f1 "$CHRX_BED" | sort -u | head -1)
+YNAME=$(cut -f1 "$CHRY_BED" | sort -u | head -1)
+
+# Autosomes are the diploid pass with the sex chromosomes dropped; PAR is added
+# back from that same pass, being diploid in both sexes.
+bcftools view -O z -o auto.vcf.gz -t "^${XNAME},${YNAME}" diploid.vcf.gz
+bcftools index -t auto.vcf.gz
+bcftools view -O z -o par.vcf.gz -R "$PAR_BED" diploid.vcf.gz
+bcftools index -t par.vcf.gz
+bcftools concat -a -O z -o "$MAIN" auto.vcf.gz par.vcf.gz
+bcftools index -t "$MAIN"
+
+for spec in "chrX_female:$CHRX_BED:diploid.vcf.gz" \
+            "chrX_male:$CHRX_BED:haploid.vcf.gz" \
+            "chrY:$CHRY_BED:haploid.vcf.gz"; do
+    name=${spec%%:*}; rest=${spec#*:}
+    bed=${rest%%:*}; src=${rest#*:}
+    bcftools view -O z -o "${PREFIX}.sv.${name}.vcf.gz" -R "$bed" "$src"
+    bcftools index -t "${PREFIX}.sv.${name}.vcf.gz"
+done
+
+rm -f diploid.vcf.gz diploid.vcf.gz.tbi haploid.vcf.gz haploid.vcf.gz.tbi \
+      auto.vcf.gz auto.vcf.gz.tbi par.vcf.gz par.vcf.gz.tbi normalise.awk
+
+echo "genotyped SV sites (>= ${MIN_LENGTH} bp):" \
+     "$(count "$MAIN") autosome+PAR," \
+     "$(count "${PREFIX}.sv.chrX_female.vcf.gz") chrX diploid," \
+     "$(count "${PREFIX}.sv.chrX_male.vcf.gz") chrX haploid," \
+     "$(count "${PREFIX}.sv.chrY.vcf.gz") chrY haploid" >&2

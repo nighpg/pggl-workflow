@@ -227,8 +227,14 @@ steps:
       threads: threads
       min_length: sv_min_length
       ref_path_prefix: ref_path_prefix
+      PAR_interval: PAR_interval
+      chrX_interval: chrX_interval
+      chrY_interval: chrY_interval
     out:
       - sv_vcf
+      - sv_vcf_chrX_female
+      - sv_vcf_chrX_male
+      - sv_vcf_chrY
 
   pick_gam:
     run: ../Tools/pick-gam.cwl
@@ -386,8 +392,23 @@ outputs:
 
   sv_vcf:
     type: File?
-    doc: Structural variants of the pangenome graph genotyped for this sample, in reference coordinates (produced when call_sv is true)
+    doc: Structural variants of the pangenome graph genotyped for this sample over the autosomes and PAR, diploid, in reference coordinates (produced when call_sv is true)
     outputSource: call_sv_step/sv_vcf
+
+  sv_vcf_chrX_female:
+    type: File?
+    doc: Genotyped graph SVs on chrX outside PAR, diploid. Emitted alongside the male file because the sample's sex is not an input, exactly as the gVCFs are.
+    outputSource: call_sv_step/sv_vcf_chrX_female
+
+  sv_vcf_chrX_male:
+    type: File?
+    doc: Genotyped graph SVs on chrX outside PAR, haploid
+    outputSource: call_sv_step/sv_vcf_chrX_male
+
+  sv_vcf_chrY:
+    type: File?
+    doc: Genotyped graph SVs on chrY outside PAR, haploid
+    outputSource: call_sv_step/sv_vcf_chrY
     secondaryFiles:
       - .tbi
 
