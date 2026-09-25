@@ -14,7 +14,14 @@ doc: |
   optional ones drop out of the command line, and the script reads the argument
   count.
 
+  Every read group of the input becomes its own lane (fq1/fq2/rg are parallel
+  arrays), so per-library duplicate marking survives the round trip.
+
 requirements:
+  # Reserve the cores this step actually uses, so `cwltool --parallel` only
+  # starts it when they are free instead of oversubscribing the node.
+  ResourceRequirement:
+    coresMin: $(inputs.threads)
   InlineJavascriptRequirement: {}
   InitialWorkDirRequirement:
     listing:
@@ -70,19 +77,19 @@ arguments:
 
 outputs:
   fq1:
-    type: File?
-    doc: Recovered read-1 FASTQ (null when neither cram nor bam is provided)
+    type: File[]
+    doc: Recovered read-1 FASTQ, one per read group of the input, in @RG header order (empty when neither cram nor bam is provided)
     outputBinding:
-      glob: $(inputs.prefix).cram2fq.R1.fastq
+      glob: $(inputs.prefix).cram2fq.*.R1.fastq
 
   fq2:
-    type: File?
-    doc: Recovered read-2 FASTQ (null when neither cram nor bam is provided)
+    type: File[]
+    doc: Recovered read-2 FASTQ, parallel to fq1
     outputBinding:
-      glob: $(inputs.prefix).cram2fq.R2.fastq
+      glob: $(inputs.prefix).cram2fq.*.R2.fastq
 
   rg:
-    type: File?
-    doc: Read group @RG line carried over from the input header (null when neither cram nor bam is provided)
+    type: File
+    doc: The @RG line of each recovered lane, one per line, parallel to fq1 (an empty file when neither cram nor bam is provided)
     outputBinding:
       glob: $(inputs.prefix).cram2fq.rg.txt
