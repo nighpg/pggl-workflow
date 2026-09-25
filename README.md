@@ -655,13 +655,6 @@ run from anywhere in the checkout.
     ├── toy_in.cram                <- 2,400 reads aligned to ref.fa (decode with ref)
     └── jobs/                      <- ready-to-run job-order JSONs (paths relative to jobs/)
 
-The reference outputs under `tests/toy/demo_out/cram_track/` and
-`tests/toy_sv/demo_out/` predate two changes and no longer match a fresh run
-record for record: `toy_in.cram` declares two read groups and is now mapped as
-two lanes (the BAM header and the tied-duplicate choice differ), and the SV
-VCFs now split the sex chromosomes by ploidy and carry `SVTYPE`. The gVCFs are
-unchanged.
-
 Run both tracks (each takes ~2 min on the toy data):
 
 ```bash

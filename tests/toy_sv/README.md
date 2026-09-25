@@ -19,12 +19,19 @@ cwltool --no-container --outdir tests/toy_sv/demo_out \
   Workflows/germline-pangenome-cpu.cwl tests/toy_sv/jobs/toy_sv_job.json
 ```
 
-`<prefix>.sv.vcf.gz` must contain exactly the three sites above, each `PASS` and
-heterozygous, with the `##contig` block in `toy_sv.ref_paths.txt` order.
+The three sites must come out `PASS`, split by ploidy like the gVCFs, with the
+`##contig` block in `toy_sv.ref_paths.txt` order and `SVTYPE` set:
+
+| File | Records |
+| --- | --- |
+| `<prefix>.sv.vcf.gz` (autosomes + PAR, diploid) | chr20:1000 `DEL` `1/0`, chr20:1800 `INS` `0/1` |
+| `<prefix>.sv.chrX_female.vcf.gz` (diploid) | chrX:800 `DEL` `1/0` |
+| `<prefix>.sv.chrX_male.vcf.gz` (haploid) | chrX:800 `DEL` `1` |
+| `<prefix>.sv.chrY.vcf.gz` | none |
 
 `jobs/toy_sv_dict_job.json` is the same run with `ref_paths` given as an HTSlib
 sequence dictionary (`ref.dict`) instead of a path list — the form a graph whose
-reference is stored as PanSN subranges needs. It must yield the same three sites
+reference is stored as PanSN subranges needs. It must yield the same records
 and the same `##contig` block:
 
 ```bash
