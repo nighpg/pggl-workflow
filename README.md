@@ -55,6 +55,7 @@ own, documented under *Haplotype sampling*.
 | `keep_bam` | `boolean` | Materialise the final duplicate-marked `<prefix>.bam` (+`.bai`) in the output directory (default `true`). Set `false` to skip it; the BAM is still built internally because DeepVariant requires it |
 | `call_sv` | `boolean` | Genotype the SVs embedded in the pangenome graph (`vg pack` + `vg call`) and emit `<prefix>.sv.vcf.gz` plus the per-sex chrX/chrY files (default `false`) |
 | `snarls` | `File` | Precomputed snarls for the graph (`vg snarls`); optional but strongly recommended for whole-genome graphs. Ignored when `call_sv` is false |
+| `keep_pack` | `boolean` | Materialise the sample-wide `<prefix>.pack` in the output directory (default `false`). It is built whenever `call_sv` is set; keeping it lets `vg call` be re-run without re-mapping |
 | `sv_min_length` | `int` | Minimum graph-site traversal length to be genotyped as an SV (`vg call -c`, default 50) |
 | `ref_name_pangenome` | `string` | *Pangenome-aware workflow only.* PanSN sample name of the reference inside the GBZ (`GRCh38`, `CHM13v2`); must name the assembly the BAM is in |
 | `sample_name_pangenome` | `string` | *Pangenome-aware workflow only.* Name for the haplotype panel taken from the GBZ; must differ from the reads' `SM` (default `pangenome`) |
@@ -74,6 +75,7 @@ own, documented under *Haplotype sampling*.
 <prefix>.sv.chrX_female.vcf.gz   (+ .tbi)  diploid   (chrX outside PAR)
 <prefix>.sv.chrX_male.vcf.gz     (+ .tbi)  haploid   (chrX outside PAR)
 <prefix>.sv.chrY.vcf.gz          (+ .tbi)  haploid
+<prefix>.pack                              sample-wide read support (only when keep_pack=true)
 ```
 
 ## Preparing a graph
@@ -802,6 +804,14 @@ Notes and limits:
   two minutes in, and `vg pack` was still blocked in `open()` thirteen minutes
   later with a zero-byte pack. A toy graph loads instantly, so the fixtures
   never showed either of these.
+- **Keep the pack if the calls may be revisited.** `keep_pack: true` copies
+  `<prefix>.pack` into the output directory; otherwise it dies with the working
+  directory. The pack is read support in *graph* space — independent of ploidy,
+  of which reference sample is called, and of every `vg call` threshold — so
+  with it and the graph's snarls a re-call takes tens of minutes instead of a
+  re-run. Measured on a 30x sample against JaSaPaGe: 3.6 GB to keep, against
+  about 9 hours of mapping to rebuild. The snarls are worth the same care on a
+  personalized graph, where they are per-sample.
 - **Disk.** Every lane's GAM has to survive until the sample pack is built —
   about 13 GB per lane at 30x, so ~156 GB for a 12-lane sample — and the
   concatenated copy doubles that at the moment of packing. Both are removed

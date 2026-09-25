@@ -132,6 +132,11 @@ inputs:
     type: File?
     doc: Precomputed snarls for the graph (vg snarls). Optional, but on whole-genome graphs recomputing them inside every run is expensive, so generate them once alongside the giraffe indexes. Ignored when call_sv is false.
 
+  keep_pack:
+    type: boolean?
+    doc: Materialise the sample-wide vg pack (<prefix>.pack) in the output directory (default false). It is built whenever call_sv is set because vg call needs it; keeping it lets vg call be re-run -- at another ploidy, against another reference sample, with other thresholds -- without re-mapping the sample. About 3.6 GB for a 30x sample against JaSaPaGe, against roughly 9 hours of mapping to rebuild.
+    default: false
+
   sv_min_length:
     type: int
     doc: Minimum traversal length for a graph site to be genotyped as an SV (vg call -c). 50 matches the usual SV definition; lower it to also emit smaller graph variants.
@@ -212,6 +217,14 @@ steps:
       gams: pick_pack_gam/gam
       prefix: prefix
       threads: threads
+    out:
+      - pack
+
+  keep_pack_gate:
+    run: ../Tools/keep-pack.cwl
+    in:
+      pack_in: build_pack/pack
+      keep: keep_pack
     out:
       - pack
 
@@ -410,6 +423,11 @@ outputs:
     type: File?
     doc: Genotyped graph SVs on chrY outside PAR, haploid
     outputSource: call_sv_step/sv_vcf_chrY
+
+  pack:
+    type: File?
+    doc: Sample-wide vg pack read support in graph space (materialised when keep_pack is true). Re-runs of vg call need only this and the graph's snarls.
+    outputSource: keep_pack_gate/pack
     secondaryFiles:
       - .tbi
 
