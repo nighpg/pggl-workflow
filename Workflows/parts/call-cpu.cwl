@@ -1,59 +1,28 @@
 #!/usr/bin/env cwl-runner
 
+# Stage 3 of germline-pangenome-cpu.cwl: everything after the lanes are mapped --
+# duplicate marking over all lanes, the five DeepVariant calls, and the graph
+# SV track (vg pack + vg call) when lane GAMs are given.
+#
+# Used as a subworkflow by Workflows/germline-pangenome-cpu.cwl, and run on its own by
+# scripts/submit-slurm.sh once every lane's parts/lane-align.cwl job is done.
+# The steps are those of the germline workflow verbatim; keep them in sync by
+# editing them here, not there.
+
 class: Workflow
-id: germline-pangenome-cpu
-label: germline-pangenome-cpu
+id: call-cpu
+label: call-cpu
 cwlVersion: v1.1
 
 requirements:
   InlineJavascriptRequirement: {}
   ScatterFeatureRequirement: {}
   StepInputExpressionRequirement: {}
-  SubworkflowFeatureRequirement: {}
 
 inputs:
-  fq1:
-    type: File[]?
-    doc: FASTQ file 1. This option can be used multiple times. Omit when cram is provided.
-    default: []
-
-  fq2:
-    type: File[]?
-    doc: FASTQ file 2. This option can be used multiple times. Omit when cram is provided.
-    default: []
-
-  rg:
-    type: string[]?
-    doc: Read group string. This option can be used multiple times. Omit when cram is provided.
-    default: []
-
-  cram:
-    type: File?
-    doc: Coordinate-sorted aligned CRAM in reference coordinates with @SQ matching ref; reads are recovered to FASTQ (decoded with ref) and re-mapped onto the pangenome with vg giraffe, exactly like a FASTQ lane. Every @RG of its header becomes its own lane with that @RG, so per-library duplicate marking is kept. Mutually exclusive with bam.
-    secondaryFiles:
-      - { pattern: ".crai", required: false }
-
-  bam:
-    type: File?
-    doc: Coordinate-sorted aligned BAM, handled exactly like cram except that no reference decoding is needed. Mutually exclusive with cram.
-    secondaryFiles:
-      - { pattern: ".bai", required: false }
-
   gbz:
     type: File
     doc: GBZ pangenome graph
-
-  dist:
-    type: File
-    doc: giraffe distance index (.dist)
-
-  min:
-    type: File
-    doc: giraffe minimizer index (.min)
-
-  zipcodes:
-    type: File
-    doc: giraffe zipcode index (.zipcodes)
 
   ref_paths:
     type: File
@@ -109,25 +78,10 @@ inputs:
     doc: Number of threads for vg giraffe, samtools and DeepVariant shards
     default: 32
 
-  emit_gam:
-    type: boolean
-    doc: Keep the per-lane graph-space alignments (lane.gam) as workflow outputs. Adds a GAM write per lane; off by default.
-    default: false
-
   keep_bam:
     type: boolean
     doc: Keep the final duplicate-marked BAM (prefix.bam / .bai) as a workflow output. The BAM is always produced internally because DeepVariant requires BAM; set false to avoid materialising it in the output directory (e.g. to save disk).
     default: true
-
-  align_chunks:
-    type: int
-    doc: Number of parallel vg giraffe processes per lane. The lane FASTQ pair is sharded into this many read-pair blocks (pairs never split), mapped in parallel with threads/chunks threads each, and the per-block BAMs are concatenated with samtools cat. Each block is its own giraffe process holding the whole index set (~77 GB for JaSaPaGe, so memory grows with the block count); all blocks use block 1's fragment-length estimate, so results are the same as one process, and blocks 2..N start only after block 1 has loaded and estimated. Set 1 for the original single-process behaviour.
-    default: 1
-
-  call_sv:
-    type: boolean
-    doc: Genotype the structural variants that are embedded in the pangenome graph (vg pack + vg call) and emit <prefix>.sv.vcf.gz. This only genotypes variation present in the graph; vg cannot discover novel SVs, so novel events still need a linear caller on <prefix>.bam. Off by default because it keeps every lane's GAM on disk until the sample-wide pack is built, tens of GB per lane at whole-genome depth.
-    default: false
 
   snarls:
     type: File?
@@ -143,146 +97,280 @@ inputs:
     doc: Minimum traversal length for a graph site to be genotyped as an SV (vg call -c). 50 matches the usual SV definition; lower it to also emit smaller graph variants.
     default: 50
 
+  sample_name:
+    type: string
+    doc: Sample name written into the SV VCF (the SM of the read groups, from parts/prepare-lanes.cwl)
+    default: SAMPLE
+
+  namecol_bams:
+    type: File[]
+    doc: Name-collated lane BAMs from parts/lane-align.cwl, in lane order; duplicate-marked together
+
+  gams:
+    type:
+      - "null"
+      - type: array
+        items: ["null", File]
+    doc: Lane GAMs to pass through as the gam output (emit_gam); nulls are dropped
+    default: []
+
+  pack_gams:
+    type:
+      - "null"
+      - type: array
+        items: ["null", File]
+    doc: Lane GAMs for the sample-wide vg pack; empty turns the SV track off (call_sv=false)
+    default: []
+
 steps:
-  # 1. Reads -> lanes (FASTQ pairs pass through; a CRAM/BAM is split by @RG).
-  prepare:
-    run: parts/prepare-lanes.cwl
+  pick_pack_gam:
+    run: ../../Tools/pick-gam.cwl
     in:
-      fq1: fq1
-      fq2: fq2
-      rg: rg
-      cram: cram
-      bam: bam
-      ref: ref
+      gam_in: pack_gams
+    out:
+      - gam
+
+  build_pack:
+    run: ../../Tools/vg-pack.cwl
+    in:
+      gbz: gbz
+      gams: pick_pack_gam/gam
       prefix: prefix
       threads: threads
-    out: [fq1, fq2, rg, lane, sample_name]
+    out:
+      - pack
 
-  # 2. Every lane onto the pangenome (scripts/submit-slurm.sh runs these as
-  #    one Slurm array task per lane instead).
-  align:
-    run: parts/lane-align.cwl
+  keep_pack_gate:
+    run: ../../Tools/keep-pack.cwl
     in:
-      fq1: prepare/fq1
-      fq2: prepare/fq2
-      rg: prepare/rg
-      lane: prepare/lane
+      pack_in: build_pack/pack
+      keep: keep_pack
+    out:
+      - pack
+
+  call_sv_step:
+    run: ../../Tools/vg-call-sv.cwl
+    in:
       gbz: gbz
-      dist: dist
-      min: min
-      zipcodes: zipcodes
+      pack: build_pack/pack
       ref_paths: ref_paths
-      ref_path_prefix: ref_path_prefix
+      snarls: snarls
+      prefix: prefix
+      sample: sample_name
       threads: threads
-      align_chunks: align_chunks
-      emit_gam: emit_gam
-      call_sv: call_sv
-    scatter: [fq1, fq2, rg, lane]
-    scatterMethod: dotproduct
-    out: [namecol_bam, gam, pack_gam]
-
-  # 3. Duplicate marking, variant calling and the SV track.
-  call:
-    run: parts/call-cpu.cwl
-    in:
-      gbz: gbz
-      ref_paths: ref_paths
-      ref: ref
+      min_length: sv_min_length
       ref_path_prefix: ref_path_prefix
-      autosome_interval: autosome_interval
-      autosome_chunks: autosome_chunks
-      autosome_chunks_count: autosome_chunks_count
       PAR_interval: PAR_interval
       chrX_interval: chrX_interval
       chrY_interval: chrY_interval
+      ref: ref
+    out:
+      - sv_vcf
+      - sv_vcf_chrX_female
+      - sv_vcf_chrX_male
+      - sv_vcf_chrY
+
+  pick_gam:
+    run: ../../Tools/pick-gam.cwl
+    in:
+      gam_in: gams
+    out:
+      - gam
+
+  to_markdup_bam:
+    run: ../../Tools/bamsormadup-to-markdup-bam.cwl
+    in:
+      namecol_bams:
+        source: namecol_bams
+        valueFrom: '$(self != null && self.length > 0 ? self : null)'
       prefix: prefix
       threads: threads
-      keep_bam: keep_bam
-      snarls: snarls
-      keep_pack: keep_pack
-      sv_min_length: sv_min_length
-      sample_name: prepare/sample_name
-      namecol_bams: align/namecol_bam
-      gams: align/gam
-      pack_gams: align/pack_gam
-    out: [bam, gam, sv_vcf, sv_vcf_chrX_female, sv_vcf_chrX_male, sv_vcf_chrY, pack, markdup_metrics, gvcf_autosome, gvcf_PAR, gvcf_chrX_female, gvcf_chrX_male, gvcf_chrY]
+    out:
+      - bam
+      - markdup_metrics
+
+  keep_bam_gate:
+    run: ../../Tools/keep-bam.cwl
+    in:
+      bam_in: to_markdup_bam/bam
+      keep: keep_bam
+    out:
+      - bam
+
+  make_autosome_chunks:
+    run: ../../Tools/make-autosome-chunks.cwl
+    in:
+      bed: autosome_interval
+      count: autosome_chunks_count
+      user_chunks: autosome_chunks
+    out:
+      - chunks
+
+  autosome_regions:
+    run: ../../Tools/autosome-regions.cwl
+    in:
+      autosome_chunks: make_autosome_chunks/chunks
+      autosome_interval: autosome_interval
+      base_shards: threads
+      prefix: prefix
+    out:
+      - chunks
+      - prefixes
+      - shards
+
+  deepvariant_autosome:
+    run: ../../Tools/deepvariant.cwl
+    in:
+      ref: ref
+      reads: to_markdup_bam/bam
+      interval: autosome_regions/chunks
+      num_shards: autosome_regions/shards
+      prefix: autosome_regions/prefixes
+    scatter: [interval, num_shards, prefix]
+    scatterMethod: dotproduct
+    out:
+      - gvcf
+
+  concat_autosome:
+    run: ../../Tools/concat-gvcfs.cwl
+    in:
+      prefix: prefix
+      gvcf: deepvariant_autosome/gvcf
+    out:
+      - out_gvcf
+
+  deepvariant_PAR:
+    run: ../../Tools/deepvariant.cwl
+    in:
+      ref: ref
+      reads: to_markdup_bam/bam
+      interval: PAR_interval
+      num_shards: threads
+      prefix:
+        source: prefix
+        valueFrom: $(self + ".PAR")
+    out:
+      - gvcf
+
+  deepvariant_chrX_female:
+    run: ../../Tools/deepvariant.cwl
+    in:
+      ref: ref
+      reads: to_markdup_bam/bam
+      interval: chrX_interval
+      num_shards: threads
+      prefix:
+        source: prefix
+        valueFrom: $(self + ".chrX_female")
+    out:
+      - gvcf
+
+  deepvariant_chrX_male:
+    run: ../../Tools/deepvariant.cwl
+    in:
+      ref: ref
+      reads: to_markdup_bam/bam
+      interval: chrX_interval
+      num_shards: threads
+      postprocess_extra_args:
+        valueFrom: "--haploid_contigs=chrX"
+      prefix:
+        source: prefix
+        valueFrom: $(self + ".chrX_male")
+    out:
+      - gvcf
+
+  deepvariant_chrY:
+    run: ../../Tools/deepvariant.cwl
+    in:
+      ref: ref
+      reads: to_markdup_bam/bam
+      interval: chrY_interval
+      num_shards: threads
+      postprocess_extra_args:
+        valueFrom: "--haploid_contigs=chrY"
+      prefix:
+        source: prefix
+        valueFrom: $(self + ".chrY")
+    out:
+      - gvcf
 
 outputs:
   bam:
     type: File?
     doc: BAM duplicate-marked, in reference coordinates (materialised when keep_bam is true)
-    outputSource: call/bam
+    outputSource: keep_bam_gate/bam
     secondaryFiles:
       - .bai
 
   gam:
     type: File[]?
     doc: Per-lane graph-space alignment in GAM format (kept when emit_gam is true)
-    outputSource: call/gam
+    outputSource: pick_gam/gam
 
   sv_vcf:
     type: File?
     doc: Structural variants of the pangenome graph genotyped for this sample over the autosomes and PAR, diploid, in reference coordinates (produced when call_sv is true)
-    outputSource: call/sv_vcf
+    outputSource: call_sv_step/sv_vcf
 
   sv_vcf_chrX_female:
     type: File?
     doc: Genotyped graph SVs on chrX outside PAR, diploid. Emitted alongside the male file because the sample's sex is not an input, exactly as the gVCFs are.
-    outputSource: call/sv_vcf_chrX_female
+    outputSource: call_sv_step/sv_vcf_chrX_female
 
   sv_vcf_chrX_male:
     type: File?
     doc: Genotyped graph SVs on chrX outside PAR, haploid
-    outputSource: call/sv_vcf_chrX_male
+    outputSource: call_sv_step/sv_vcf_chrX_male
 
   sv_vcf_chrY:
     type: File?
     doc: Genotyped graph SVs on chrY outside PAR, haploid
-    outputSource: call/sv_vcf_chrY
+    outputSource: call_sv_step/sv_vcf_chrY
 
   pack:
     type: File?
     doc: Sample-wide vg pack read support in graph space (materialised when keep_pack is true). Re-runs of vg call need only this and the graph's snarls.
-    outputSource: call/pack
+    outputSource: keep_pack_gate/pack
     secondaryFiles:
       - .tbi
 
   markdup_metrics:
     type: File
     doc: MarkDuplicates statistics (replaces the BQSR table of the linear WGSpipeline)
-    outputSource: call/markdup_metrics
+    outputSource: to_markdup_bam/markdup_metrics
 
   gvcf_autosome:
     type: File
     doc: Diploid gVCF for autosome regions (reference coordinates)
-    outputSource: call/gvcf_autosome
+    outputSource: concat_autosome/out_gvcf
     secondaryFiles:
       - .tbi
 
   gvcf_PAR:
     type: File
     doc: Diploid gVCF for PAR regions (reference coordinates)
-    outputSource: call/gvcf_PAR
+    outputSource: deepvariant_PAR/gvcf
     secondaryFiles:
       - .tbi
 
   gvcf_chrX_female:
     type: File
     doc: Diploid gVCF for female chrX
-    outputSource: call/gvcf_chrX_female
+    outputSource: deepvariant_chrX_female/gvcf
     secondaryFiles:
       - .tbi
 
   gvcf_chrX_male:
     type: File
     doc: Haploid gVCF for male chrX
-    outputSource: call/gvcf_chrX_male
+    outputSource: deepvariant_chrX_male/gvcf
     secondaryFiles:
       - .tbi
 
   gvcf_chrY:
     type: File
     doc: Haploid gVCF for chrY
-    outputSource: call/gvcf_chrY
+    outputSource: deepvariant_chrY/gvcf
     secondaryFiles:
       - .tbi
