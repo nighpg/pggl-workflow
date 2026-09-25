@@ -26,13 +26,22 @@ FQ2=${10}
 LANE=${11}
 EMIT_GAM=${12:-false}
 
+# -p only adds progress lines to the log -- among them the fragment-length
+# estimate, which giraffe-sharded.sh reads from block 1 to hand to the others.
+# GIRAFFE_EXTRA_ARGS (whitespace-separated) is appended as is; giraffe-sharded.sh
+# uses it for --fragment-mean/--fragment-stdev.
 GIRAFFE_ARGS=(
   -Z "$GBZ" -d "$DIST" -m "$MIN" -z "$ZIP"
   --ref-paths "$REFPATHS"
   -t "$THREADS"
   -f "$FQ1" -f "$FQ2"
   --output-format GAM
+  -p
 )
+if [ -n "${GIRAFFE_EXTRA_ARGS:-}" ]; then
+  read -r -a _extra <<< "$GIRAFFE_EXTRA_ARGS"
+  GIRAFFE_ARGS+=( "${_extra[@]}" )
+fi
 SURJECT_ARGS=(
   -x "$GBZ" -b -i -F "$REFPATHS"
   -t "$THREADS"
