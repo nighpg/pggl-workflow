@@ -308,6 +308,12 @@ under *Running*: fine for a couple of lanes, not for a sample with many.
 Reference data (the ~54 GB JaSaPaGe graph + indexes + linear ref) is **not**
 bundled; bind-mount it or pass host paths at runtime.
 
+The image carries the tools, so **a def file gaining one means the image has to
+be rebuilt** — `kmc` arrived after the first images were built here, and until
+they were rebuilt `Workflows/haplotype-sample.cwl` could not run at all while
+everything else looked fine. A rebuild takes about 5 minutes once
+`scripts/stage-sif-assets.sh` has staged the assets.
+
 ```bash
 cd /home/tago/biohack/pggl-workflow
 ./scripts/stage-sif-assets.sh                       # stage sif-stage/ + image/ build assets
@@ -717,6 +723,13 @@ is wrong for the autosomes — but nothing is taken from the autosomes of that
 pass. The cost is one more `vg call`: measured at 22 minutes on JaSaPaGe
 against a 12 h 43 m whole run, so about +3%. The pack is ploidy-independent and
 is reused, not rebuilt.
+
+Verified on NA18945 (male), calling `Tools/vg-call-sv.cwl` over a saved pack of
+the personalized graph — 26 m 47 s, 21 GB peak: 26,149 records in the main file
+carrying chrX only inside PAR (414 in PAR1, 6 in PAR2, none outside), zero chrY,
+and all 666 chrX records of the male file genotyped haploid against 801 diploid
+ones in the female file over the same interval. Before the split, a single
+diploid pass called 47.6% of chrX heterozygous.
 
 **Inversions and duplications are called, but not labelled.** `vg call` writes
 REF and ALT as explicit sequences and never emits a symbolic `<INV>` or

@@ -2,6 +2,8 @@
 sif-stage/
 image/
 *.sif
+# a dated copy of an image kept while its replacement is checked
+*.sif.[0-9]*
 # offline bundle (created by scripts/fetch-offline-bundle.sh)
 offline-bundle/
 pggl-offline-bundle-*.tar
