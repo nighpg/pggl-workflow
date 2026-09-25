@@ -21,6 +21,10 @@ doc: |
   --no-container run; sif-build-pangenome-aware.def builds the matching image.
 
 requirements:
+  # Reserve the cores this step actually uses, so `cwltool --parallel` only
+  # starts it when they are free instead of oversubscribing the node.
+  ResourceRequirement:
+    coresMin: $(inputs.num_shards)
   InlineJavascriptRequirement: {}
 
 hints:

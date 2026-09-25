@@ -17,6 +17,10 @@ doc: |
   do not matter: every lane is counted as one sample.
 
 requirements:
+  # Reserve the cores this step actually uses, so `cwltool --parallel` only
+  # starts it when they are free instead of oversubscribing the node.
+  ResourceRequirement:
+    coresMin: $(inputs.threads)
   InlineJavascriptRequirement: {}
   InitialWorkDirRequirement:
     listing:
