@@ -18,11 +18,15 @@ THREADS=$3
 TARGET_MEM=${4:-}
 
 # vg spills large intermediates; keep them where the runner put the job, not in
-# a node-local /tmp that is often far too small.
-: "${TMPDIR:=$PWD/autoindex_tmp}"
-mkdir -p "$TMPDIR"
+# a node-local /tmp that is often far too small. This is deliberately not
+# derived from TMPDIR: cwltool always sets TMPDIR to its own scratch directory
+# (under /tmp unless --tmpdir-prefix says otherwise), so a TMPDIR fallback would
+# never take effect under the workflow.
+SPILL_DIR="$PWD/autoindex_tmp"
+mkdir -p "$SPILL_DIR"
+trap 'rm -rf "$SPILL_DIR"' EXIT
 
-ARGS=( -p "$PREFIX" -G "$GBZ" -w giraffe -t "$THREADS" -T "$TMPDIR" )
+ARGS=( -p "$PREFIX" -G "$GBZ" -w giraffe -t "$THREADS" -T "$SPILL_DIR" )
 [ -n "$TARGET_MEM" ] && ARGS+=( -M "$TARGET_MEM" )
 
 vg autoindex "${ARGS[@]}"
