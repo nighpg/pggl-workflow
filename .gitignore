@@ -11,3 +11,6 @@ pggl-offline-bundle-*.tar.sha256
 pggl-offline-bundle-*.tar.part-*
 tool-images/
 .offline-build/
+# python bytecode
+__pycache__/
+*.pyc
