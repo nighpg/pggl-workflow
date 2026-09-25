@@ -9,6 +9,10 @@ $namespaces:
   cwltool: http://commonwl.org/cwltool#
 
 requirements:
+  # Reserve the cores this step actually uses, so `cwltool --parallel` only
+  # starts it when they are free instead of oversubscribing the node.
+  ResourceRequirement:
+    coresMin: $(inputs.threads)
   InlineJavascriptRequirement: {}
   InitialWorkDirRequirement:
     listing:
@@ -101,7 +105,7 @@ inputs:
 
   chunks:
     type: int
-    doc: Shard the FASTQ pair into this many read-pair blocks and map them in parallel (1 = single process). A block never splits a read pair, so the alignment of every read is identical to a single-process run.
+    doc: Shard the FASTQ pair into this many read-pair blocks and map them in parallel (1 = single process). A block never splits a read pair, and every block uses block 1's fragment-length estimate, so the lane maps as a single process does; each block holds the whole index set in memory, and blocks 2..N start once block 1 has estimated.
     default: 1
     inputBinding:
       position: 13
