@@ -7,7 +7,10 @@ cwlVersion: v1.1
 
 requirements:
   InlineJavascriptRequirement: {}
+  # Reserve the cores this step actually uses, so `cwltool --parallel` only
+  # starts it when they are free instead of oversubscribing the node.
   ResourceRequirement:
+    coresMin: $(inputs.num_shards)
     ramMin: 40960
 
 hints:

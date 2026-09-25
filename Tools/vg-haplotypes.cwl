@@ -15,6 +15,10 @@ doc: |
   than passing on a graph the rest of the pipeline cannot use.
 
 requirements:
+  # Reserve the cores this step actually uses, so `cwltool --parallel` only
+  # starts it when they are free instead of oversubscribing the node.
+  ResourceRequirement:
+    coresMin: $(inputs.threads)
   InlineJavascriptRequirement: {}
   InitialWorkDirRequirement:
     listing:

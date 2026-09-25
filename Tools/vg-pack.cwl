@@ -6,6 +6,10 @@ label: vg-pack (build read support from every lane's GAM)
 cwlVersion: v1.1
 
 requirements:
+  # Reserve the cores this step actually uses, so `cwltool --parallel` only
+  # starts it when they are free instead of oversubscribing the node.
+  ResourceRequirement:
+    coresMin: $(inputs.threads)
   InlineJavascriptRequirement: {}
   InitialWorkDirRequirement:
     listing:
