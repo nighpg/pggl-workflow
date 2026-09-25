@@ -23,14 +23,33 @@ supply reads (can be combined, lanes are concatenated):
 - **FASTQ track** (default): `fq1`/`fq2` + `rg` → `vg giraffe` alignment.
 - **Aligned-reads track**: an aligned **CRAM** (linear/`ref` coordinates, `@SQ`
   matching `ref`) or **BAM** is name-collated back to read-pair FASTQ
-  (`samtools collate` + `fastq`, its `@RG` header is carried over, orphans are
-  dropped), then re-mapped onto the pangenome with `vg giraffe` exactly like a
+  (`samtools collate` + `fastq`, orphans are dropped), one lane per `@RG` of
+  its header so each read group keeps its own `@RG` and library, then re-mapped onto the pangenome with `vg giraffe` exactly like a
   FASTQ lane. A CRAM is decoded against `ref`; a BAM carries its own sequences,
   so no decoding happens. `cram` and `bam` are separate inputs and giving both
   is an error rather than something resolved silently.
 
 The pangenome graph + `giraffe` indexes (`gbz`, `dist`, `min`, `zipcodes`,
 `ref_paths`) are required in BOTH modes.
+
+### How the workflows are built
+
+Each germline workflow is three parts from `Workflows/parts/`, run in order:
+
+```
+parts/prepare-lanes.cwl      reads -> lanes: FASTQ lanes pass through; a CRAM/BAM
+                             is decoded and split into one lane per @RG
+parts/lane-align.cwl         one lane: vg giraffe -> vg surject -> PanSN prefix
+   (scattered over lanes)    stripped + full @RG applied (name-collated lane BAM)
+parts/call-<variant>.cwl     all lanes: bamsormadup, the five DeepVariant calls,
+                             the graph-SV track (vg pack + vg call)
+```
+
+`Workflows/germline-pangenome-<variant>.cwl` only wires them together; the
+steps themselves live in the parts, so change them there. The same parts are
+what `scripts/submit-slurm.sh` runs as separate Slurm jobs (see *Running across
+Slurm nodes*), which is why a single-node run and a Slurm run give the same
+outputs from the same job file.
 
 ## Inputs
 
@@ -39,18 +58,21 @@ own, documented under *Haplotype sampling*.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| `fq1` / `fq2` | `File[]` | Read-pair FASTQs, one entry per read group (may be omitted; use `cram` instead) |
+| `fq1` / `fq2` | `File[]` | Read-pair FASTQs, one entry per read group, plain or gzip-compressed (may be omitted; use `cram` instead) |
 | `rg` | `string[]` | Full `@RG` string per read group, e.g. `@RG\tID:L1\tPL:ILLUMINA\tSM:SAMPLE` (literal `\t` or real tabs both work) |
-| `cram` | `File` | Aligned CRAM in reference coordinates (`@SQ` matching `ref`); recovered to FASTQ and re-mapped onto the pangenome (its `@RG` is carried over). Mutually exclusive with `bam` |
+| `cram` | `File` | Aligned CRAM in reference coordinates (`@SQ` matching `ref`); recovered to FASTQ and re-mapped onto the pangenome, one lane per `@RG` of its header. Mutually exclusive with `bam` |
 | `bam` | `File` | Aligned BAM, handled exactly like `cram` but without reference decoding. Mutually exclusive with `cram` |
 | `gbz` | `File` | Pangenome graph (required) |
 | `dist` / `min` / `zipcodes` | `File` | giraffe distance / minimizer / zipcode indexes (required) |
-| `ref_paths` | `File` | Ordered reference path names (PanSN), one per line; drives giraffe `@SQ` and surjection (required) |
+| `ref_paths` | `File` | Reference paths to surject onto, in `@SQ` order: one PanSN path name per line, or a PanSN-named sequence dictionary (`.dict`), which a reference stored as fragments requires (see *Surjecting onto a reference the graph only holds in fragments*) |
 | `ref` | `File` | Linear GRCh38 (or T2T-CHM13) FASTA (+`.fai`); sequences must match the graph reference paths |
 | `ref_path_prefix` | `string` | PanSN prefix to strip from `@SQ`, e.g. `GRCh38#0#`; `""` disables |
 | `autosome_interval`, `PAR_interval`, `chrX_interval`, `chrY_interval` | `File` | Interval BEDs (from `interval_files/`) |
 | `prefix` | `string` | Output prefix |
-| `threads` | `int` | CPU threads (default 32) |
+| `threads` | `int` | CPU threads for giraffe, samtools and DeepVariant shards (default 32) |
+| `align_chunks` | `int` | giraffe processes per lane, each mapping a contiguous block of the lane's read pairs (default 1). Each process holds the whole index set (~80 GB for JaSaPaGe); all blocks use one fragment-length estimate, so the result is the same as one process (see *Parallelisation*) |
+| `autosome_chunks_count` | `int` | Split the autosome DeepVariant call into ~N contig-balanced chunks (default 0 = one chunk) |
+| `autosome_chunks` | `File[]` | Explicit autosome chunk BEDs instead (default none) |
 | `emit_gam` | `boolean` | Keep the per-lane graph-space alignments (`<prefix>.<lane>.gam`) as workflow outputs (default `false`). Adds one GAM write per lane; the BAM is always produced from the same one-pass via `vg surject` |
 | `keep_bam` | `boolean` | Materialise the final duplicate-marked `<prefix>.bam` (+`.bai`) in the output directory (default `true`). Set `false` to skip it; the BAM is still built internally because DeepVariant requires it |
 | `call_sv` | `boolean` | Genotype the SVs embedded in the pangenome graph (`vg pack` + `vg call`) and emit `<prefix>.sv.vcf.gz` plus the per-sex chrX/chrY files (default `false`) |
@@ -59,6 +81,64 @@ own, documented under *Haplotype sampling*.
 | `sv_min_length` | `int` | Minimum graph-site traversal length to be genotyped as an SV (`vg call -c`, default 50) |
 | `ref_name_pangenome` | `string` | *Pangenome-aware workflow only.* PanSN sample name of the reference inside the GBZ (`GRCh38`, `CHM13v2`); must name the assembly the BAM is in |
 | `sample_name_pangenome` | `string` | *Pangenome-aware workflow only.* Name for the haplotype panel taken from the GBZ; must differ from the reads' `SM` (default `pangenome`) |
+
+### Writing a job file
+
+A job file is the CWL job order: the inputs above as JSON. The same file drives
+a single-node `cwltool` run and `scripts/submit-slurm.sh`.
+
+- Files are `{"class": "File", "path": "..."}`; a relative path is relative to
+  the job file. Use paths every node can see: `/usr/local/shared_data` exists
+  on the login node only, the same tree is `/lustre9/open/shared_data` on the
+  compute nodes.
+- Secondary files are not listed: they are found next to the main file.
+  `ref` needs `<name>.fai` and `<name without .fa>.dict`; a `.crai` next to the
+  CRAM is used when present.
+- In `rg`, write the tabs as `\\t` (JSON-escaped backslash + t). Lane IDs
+  must be unique; `SM` names the sample in the SV VCF.
+- Inputs with a default can be left out.
+
+A CRAM against JaSaPaGe, surjected onto GRCh38, with the SV track:
+
+```json
+{
+  "cram":      {"class": "File", "path": "/data/NA18945.cram"},
+  "ref":       {"class": "File", "path": "/data/ref/GRCh38_full_analysis_set_plus_decoy_hla.fa"},
+  "gbz":       {"class": "File", "path": "/data/JaSaPaGe/JaSaPaGe.gbz"},
+  "dist":      {"class": "File", "path": "/data/JaSaPaGe/jasapage.dist"},
+  "min":       {"class": "File", "path": "/data/JaSaPaGe/jasapage.shortread.withzip.min"},
+  "zipcodes":  {"class": "File", "path": "/data/JaSaPaGe/jasapage.shortread.zipcodes"},
+  "ref_paths": {"class": "File", "path": "/data/JaSaPaGe/GRCh38.pansn.dict"},
+  "ref_path_prefix": "GRCh38#0#",
+  "autosome_interval": {"class": "File", "path": "interval_files/autosome.bed"},
+  "PAR_interval":      {"class": "File", "path": "interval_files/PAR.bed"},
+  "chrX_interval":     {"class": "File", "path": "interval_files/chrX.bed"},
+  "chrY_interval":     {"class": "File", "path": "interval_files/chrY.bed"},
+  "prefix": "NA18945",
+  "threads": 128,
+  "call_sv": true,
+  "snarls": {"class": "File", "path": "/data/JaSaPaGe/JaSaPaGe.snarls"}
+}
+```
+
+For FASTQ lanes, replace `cram` with three parallel lists, one entry per lane:
+
+```json
+  "fq1": [{"class": "File", "path": "S1_L1_R1.fastq.gz"}, {"class": "File", "path": "S1_L2_R1.fastq.gz"}],
+  "fq2": [{"class": "File", "path": "S1_L1_R2.fastq.gz"}, {"class": "File", "path": "S1_L2_R2.fastq.gz"}],
+  "rg":  ["@RG\\tID:L1\\tPL:ILLUMINA\\tLB:S1\\tSM:S1", "@RG\\tID:L2\\tPL:ILLUMINA\\tLB:S1\\tSM:S1"]
+```
+
+Which reference files go together for JaSaPaGe:
+
+| surject onto | `ref_paths` | `ref_path_prefix` | interval BEDs | `ref` |
+| --- | --- | --- | --- | --- |
+| GRCh38 | `GRCh38.pansn.dict` | `GRCh38#0#` | `interval_files/` | the GRCh38 FASTA the CRAMs were made with |
+| T2T-CHM13 | `jasapage.ref_paths.txt` | `CHM13v2#0#` | `interval_files/chm13_t2t/` | `jasa.chm13.fa` extracted from the graph |
+
+`scripts/submit-slurm.sh --job job.json --workdir /tmp/check --dry-run` splits
+the job into its per-stage jobs without submitting anything, which catches
+missing keys and paths early.
 
 ## Outputs
 
@@ -202,11 +282,24 @@ default it runs them one after another. Pass `--parallel` (short `-p`) so the
 scattered jobs really overlap — the `align_chunks` giraffe blocks, the
 `autosome_chunks_count` chunks, and the per-chunk DeepVariant steps. This is
 important for keeping several calling steps in flight, and without it a
-real WGS run is dramatically slower. Because `--parallel` dispatches all ready
-jobs at once, peak CPU is `--threads` × the number of concurrent jobs: size
-`--threads` to the node's core count (e.g. 64 on a 64-core box) and raise
+real WGS run is dramatically slower. Every multithreaded step declares the cores
+it uses (`ResourceRequirement.coresMin`: `threads` for vg/samtools/bamsormadup,
+`num_shards` for DeepVariant), and under `--parallel` cwltool only starts a job
+when that many cores are still unallocated, so the node is not oversubscribed:
+the autosome chunks (whose shards add up to `threads`) run together, and the
+PAR / chrX / chrY callers, each asking for `threads`, queue behind them. Size
+`--threads` to the cores the run may use (e.g. 64 on a 64-core box) and raise
 `align_chunks` only while the node has the memory (each block is a separate
-process that reloads the whole graph, see *Parallelisation* below).
+process that reloads the whole graph, see *Parallelisation* below). Two
+caveats of cwltool's scheduler:
+
+- Its core budget is `psutil.cpu_count()`, i.e. **every CPU of the host**, not a
+  Slurm/cgroup allocation. On a node you share, the budget is too large and
+  jobs can still overlap beyond your allocation; keep `--threads` equal to the
+  allocation and prefer a whole node, or leave out `--parallel`.
+- A step that asks for more cores than the host has fails at once with
+  `Requested at least N cores but only M available`: lower `--threads` (the
+  default is 32). Without `--parallel` cwltool does not check this.
 
 **But `--parallel` breaks once a sample has many lanes.** cwltool then hands
 two scattered `giraffe` jobs the same temporary output directory, and the
@@ -249,6 +342,30 @@ and `samtools` must both be on `$PATH` under `--no-container`).
 
 The GPU workflow additionally uses `google/deepvariant:1.10.0-gpu` for the
 five variant-calling steps (`vg giraffe` and `samtools` stay on CPU).
+
+### Keep the graph and indexes on node-local disk
+
+`vg` memory-maps parts of its index set, so when `gbz` / `dist` / `min` /
+`zipcodes` sit on Lustre every page fault becomes a distributed-lock round
+trip. With one node reading them that goes unnoticed; once several nodes map
+the same files, every mapper stalls. Observed on the NA18945 test run: lanes
+went from ~3.5 min to hours, the node showed **93% system / 3% user CPU** with
+no I/O wait, and the giraffe threads sat in `ldlm_completion_ast`.
+
+Copy the four files to node-local disk before starting the run and point the
+job at the copies. `scripts/slurm-jobs.py stage-local` does exactly that:
+
+```bash
+LD=/tmp/pggl-index.$SLURM_JOB_ID
+trap 'rm -rf "$LD"' EXIT
+python3 scripts/slurm-jobs.py stage-local job.json "$LD" job.local.json gbz dist min zipcodes
+apptainer exec --bind /lustre9 --bind /tmp deepvariant-opencode-cpu-vg.sif \
+  cwltool --no-container --outdir out/ Workflows/germline-pangenome-cpu.cwl job.local.json
+```
+
+The JaSaPaGe set is ~52 GB; one node copies it in ~45 s from a warm page
+cache and up to ~7 min when several nodes read it at once. The Slurm path does
+this for every lane task automatically (`--local-index`).
 
 ### GPU track
 
@@ -301,6 +418,76 @@ without an allocated GPU.
 `--parallel` in the example above is subject to the same staging race described
 under *Running*: fine for a couple of lanes, not for a sample with many.
 
+## Running across Slurm nodes
+
+cwltool runs a workflow on one machine, so a many-lane sample maps its lanes
+one after another there even when the rest of the cluster is idle.
+`scripts/submit-slurm.sh` spreads them over the cluster instead, without a
+workflow engine: each germline workflow is built from three parts in
+`Workflows/parts/`, and the script runs each part as its own Slurm job, cwltool
+inside the SIF, chained with job dependencies.
+
+```
+1. prepare  1 job                   parts/prepare-lanes.cwl   reads -> lanes (a CRAM/BAM is split by @RG)
+2. lane     array, 1 task per lane  parts/lane-align.cwl      vg giraffe -> surject -> lane BAM (+ GAM)
+3. call     1 job, after all lanes  parts/call-<variant>.cwl  markdup, DeepVariant x5, graph SVs
+```
+
+The germline workflows run exactly these parts in one process (prepare, then
+the lane part scattered over the lanes, then the calling part), and the script
+feeds them from the same job file, so both routes produce the same outputs.
+The number of lanes is only known once stage 1 has read the input, so stage 1
+submits stages 2 and 3 itself when it finishes.
+
+```bash
+scripts/submit-slurm.sh --job job.json --workdir /lustre/.../run1 \
+  --partition test --variant cpu          # or gpu / pangenome-aware-cpu
+```
+
+- Each lane task gets 32 threads, one giraffe process and 100 GB
+  (`--lane-threads 32 --lane-align-chunks 1 --lane-mem-per-chunk 100`), so
+  Slurm packs several lanes onto a node; the calling job gets a whole node
+  (`--exclusive --mem=0 --cpus-per-task=<threads>`, `threads` from the job
+  file) and stage 1 `--cpus-per-task=32 --mem=64G`. `--lane-whole-node` gives
+  every lane a node of its own instead; `--lane-sbatch`, `--call-sbatch` and
+  `--prepare-sbatch` replace the sbatch options outright, and `--max-lanes N`
+  caps the concurrent lanes.
+- Why small lanes: giraffe spends a fixed ~85 s loading the JaSaPaGe indexes
+  whatever its thread count, and its mapping scales well only to about 32
+  threads. Measured on one lane of NA18945 (7.9M reads, AMD EPYC 9654,
+  loading excluded):
+
+  | threads | 8 | 16 | 32 | 64 | 96 | 128 | 192 |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | mapping (s) | 397 | 201 | 105 | 59 | 45 | 39 | 39 |
+  | efficiency vs 8 | 100% | 99% | 94% | 84% | 73% | 64% | 42% |
+
+  One lane with a whole 128-core node took ~110-123 s however it was split
+  (align_chunks 1-4); four 32-thread lanes side by side overlap their loading
+  and finish a lane every ~47 s. Each giraffe process holds the full index set
+  (~80 GB for JaSaPaGe) whatever its threads, so memory, not CPU, is what
+  limits how many lanes share a node.
+- Lane tasks map from a node-local copy of the graph and indexes
+  (`--local-index /tmp`, ~55 GB), shared by the lane tasks on a node and
+  removed by the last one. vg memory-maps its indexes: mapped straight from
+  Lustre by several nodes at once, the mappers stalled on lock traffic (93%
+  system CPU, lanes going from ~3.5 min to hours). Copying costs one
+  sequential read per node — ~45 s from a warm page cache, up to ~7 min when
+  five nodes copy at once.
+- Pass the memory explicitly when overriding: a partition's default is often
+  per CPU (8 GB here), and `--exclusive` with 128 CPUs then asks for 1 TB, which
+  no node has — the job pends on `Resources` for ever.
+- The work dir holds everything: `job.json` (the job with absolute paths), the
+  stage scripts, `logs/`, `lanes/NNNN/` (per-lane jobs and outputs),
+  `jobs.tsv` (the Slurm job IDs) and `out/`, which has the same files a
+  single-node run writes to `--outdir`. It must be on storage every node sees.
+- The container binds the top-level directories of the checkout, the work dir
+  and every input path (as written and as resolved) automatically; add others
+  with `--bind`. Paths such as `/usr/local/shared_data` that exist only on the
+  login node must be given by their cluster-wide name.
+- A failed lane task cancels the calling job (`--kill-on-invalid-dep`); fix the
+  cause and resubmit. `--dry-run` writes the stage scripts without submitting.
+
 ## Self-contained SIF (no-setup on any host)
 
 `./sif-build.def` produces a single image containing DeepVariant, samtools/bcftools,
@@ -342,7 +529,21 @@ the base image). On a shared host where you are not root and have no
 `apptainer build --fakeroot --ignore-fakeroot-command ...`: apptainer then maps
 your uid to root in a user namespace, which is all `%post` needs here (the
 `--ignore-fakeroot-command` is required because the injected `faked` helper is
-not usable in that mapping).
+not usable in that mapping). SingularityCE cannot do this: without a subuid
+entry `singularity build --fakeroot` stops with `could not use fakeroot: no
+valid mapping entry found`, so use apptainer (on the NIG cluster,
+`/opt/pkg/apptainer/1.4.5/bin/apptainer`). Point `APPTAINER_TMPDIR` and
+`APPTAINER_CACHEDIR` at a disk with a few GB free; the CPU image is ~2 GB.
+
+```bash
+./scripts/stage-sif-assets.sh      # downloads vg, node, the DeepVariant base image, wheels, debs
+/opt/pkg/apptainer/1.4.5/bin/apptainer build --fakeroot --ignore-fakeroot-command \
+    deepvariant-opencode-cpu-vg.sif sif-build.def
+```
+
+Bind every directory the job refers to when running the image
+(`--bind /lustre9 --bind /home ...`), including the targets of symlinks.
+
 Before building, run `./scripts/stage-sif-assets.sh` once:
 it creates `sif-stage/` (vg, node, cwltool wheels, `biobambam2/`) and `image/`
 (the CPU base SIF for the `localimage` bootstrap + the opencode tarball) by
@@ -454,11 +655,18 @@ run from anywhere in the checkout.
     ├── toy_in.cram                <- 2,400 reads aligned to ref.fa (decode with ref)
     └── jobs/                      <- ready-to-run job-order JSONs (paths relative to jobs/)
 
+The reference outputs under `tests/toy/demo_out/cram_track/` and
+`tests/toy_sv/demo_out/` predate two changes and no longer match a fresh run
+record for record: `toy_in.cram` declares two read groups and is now mapped as
+two lanes (the BAM header and the tied-duplicate choice differ), and the SV
+VCFs now split the sex chromosomes by ploidy and carry `SVTYPE`. The gVCFs are
+unchanged.
+
 Run both tracks (each takes ~2 min on the toy data):
 
 ```bash
 # 1) FASTQ track: paired FASTQs (2 lanes) -> vg giraffe (pangenome) -> DV
-cwltool --no-container --outdir tests/toy/demo_out/fastq_track \
+cwltool --no-container --outdir tests/toy/demo_out/opt_default \
   Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/toy_job.json
 
 # 2) CRAM track: reads are recovered to FASTQ *inside the workflow*
@@ -489,7 +697,7 @@ cwltool --no-container --outdir tests/toy/demo_out/pangenome_aware \
   tests/toy/jobs/toy_pangenome_aware_job.json
 ```
 
-`jobs/toy_job.json` (and the top-level `toy.json`) also show the new
+`jobs/toy_job.json` also shows the new
 `autosome_chunks_count` input (the toy autosome has a single contig, so any
 count there just yields one chunk).
 
@@ -498,11 +706,11 @@ cases):
 
 ```bash
 # keep the per-lane GAM in addition to the BAM -> L1.gam, L2.gam
-cwltool --no-container --outdir tests/toy/demo_out/emit_gam \
+cwltool --no-container --outdir tests/toy/demo_out/opt_emit_gam \
   Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/toy_emit_gam_job.json
 
 # drop the final BAM from the outputs (still built internally for DeepVariant)
-cwltool --no-container --outdir tests/toy/demo_out/no_bam \
+cwltool --no-container --outdir tests/toy/demo_out/opt_no_bam \
   Workflows/germline-pangenome-cpu.cwl tests/toy/jobs/toy_keep_bam_job.json
 ```
 
@@ -881,17 +1089,32 @@ a 64-thread CPU box):
 - `align_chunks` (int, default `1`): shard each lane's FASTQ pair into this many
   read-pair blocks and run `vg giraffe -> surject` **in parallel** (each block
   gets `ceil(threads/align_chunks)` threads), then concatenate the per-block BAMs
-  with `samtools cat`. A block never splits a read pair, so **every read is
-  aligned identically** to a single process; only the lane BAM record order
-  changes (bamsormadup normalises it downstream). Total memory stays
-  roughly constant while the per-process peak drops by `align_chunks`. Example
-  `--align_chunks 8` gives ~4-6x speed-up of the mapping step on top of the
-  per-lane scatter.
+  with `samtools cat`. Gzipped FASTQs are decompressed on the fly for the
+  sharding, and the blocks are written uncompressed to the job directory; with
+  `align_chunks=1` the lane FASTQs are mapped in place and no copy is written.
+  A block never splits a read pair, and every block maps with the lane's one
+  fragment-length distribution: giraffe estimates it from the first read pairs
+  it sees, so block 1 (the lane's first pairs) is started alone, its estimate is
+  read from its log, and blocks 2..N get it with `--fragment-mean` /
+  `--fragment-stdev`. The lane therefore maps exactly as one process does
+  (checked on an NA18945 lane: 7.9M records identical at 1 and 4 blocks).
+  Without this, each block estimated its own distribution and ~0.06% of the
+  variant calls moved. The price is that blocks 2..N wait for block 1's index
+  load (~1.5 min for JaSaPaGe), so on a small lane more blocks can be slower:
+  that lane took 165 s with 1 block and 295 s with 4.
+
+  giraffe itself scales well to ~32 threads and poorly beyond (measured on one
+  NA18945 lane, 7.9M reads, loading excluded: 94% efficiency at 32 threads, 64%
+  at 128, nothing gained past 128), and it spends a fixed ~85 s loading the
+  JaSaPaGe indexes however many threads it has. So on a big node, several
+  blocks of ~32 threads use the cores better than one process with all of them
+  — or, better still, several lanes side by side (the Slurm path's default).
 
   **Memory is the binding constraint, and it is per block.** Every block holds
-  the whole index set resident: for JaSaPaGe that is ~52 GB (`min` 38 GB +
-  `dist` 7.6 GB + `gbz` 3.3 GB + `zipcodes` 2.6 GB), so a 251 GB node takes 2
-  blocks with headroom, not 8. Since `--parallel` is unusable on a many-lane
+  the whole index set resident: for JaSaPaGe that is ~52 GB of files (`min`
+  38 GB + `dist` 7.6 GB + `gbz` 3.3 GB + `zipcodes` 2.6 GB) and **~77 GB
+  measured per block** (giraffe ~57-66 GB RSS + its `vg surject` ~11 GB), so a
+  251 GB node takes 2-3 blocks, not 8, and a 503 GB node 4-6. Since `--parallel` is unusable on a many-lane
   sample (see *Running*), `align_chunks` is also where all the mapping
   parallelism has to come from: `align_chunks=2` with `threads` set to the core
   count gives each block `ceil(threads/2)` and keeps the node busy while
@@ -903,7 +1126,7 @@ a 64-thread CPU box):
   chunk over the whole autosome (the previous behaviour); `N>=2` groups
   contiguous contigs into ~`N` bp-balanced chunks, and an `N` at or above the
   number of contigs gives one chunk per contig. A contig is never split across
-  chunks. Each chunk still gets `ceil(base_shards / #chunks)` DeepVariant shards
+  chunks. Each chunk still gets `floor(base_shards / #chunks)` (at least 1) DeepVariant shards
   (`threads`, in both the CPU and the GPU workflow).
 
 - `autosome_chunks` (BED `File[]`, default `[]`): optional **explicit** chunk
@@ -924,8 +1147,35 @@ a 64-thread CPU box):
 
 ### Result equivalence
 
-Verified on the toy data (`align_chunks=2` and two manually halved autosome
-chunks vs the default single-process run):
+**Real data (NA18945, 10% subsample, JaSaPaGe -> GRCh38), before the blocks
+shared a fragment-length estimate.** The same job run with `align_chunks=4`
+(128 threads per lane) and with `align_chunks=1` (32 threads per lane) gave:
+
+| | `align_chunks=4` | `align_chunks=1` | shared | concordance |
+| --- | --- | --- | --- | --- |
+| PASS non-ref calls, autosome | 3,131,015 | 3,130,967 | 3,129,186 | 99.94% |
+| PAR | 6,448 | 6,443 | 6,433 | 99.81% |
+| chrX (diploid / haploid) | 57,399 / 57,047 | 57,414 / 57,063 | 57,362 / 57,013 | 99.92% / 99.93% |
+| chrY | 4,275 | 4,291 | 4,235 | 98.88% |
+| graph SVs genotyped | 50,768 | 50,765 | 50,643 | 99.75% |
+| unmapped reads (of 77.9M) | 6,272,176 | 6,272,010 | | |
+
+(calls matched on position, alleles and genotype). Thread count alone does not
+change giraffe's result — its fragment-length estimate was identical at 8 to
+192 threads on the same input — and runs with the same block count gave
+identical alignments whether run on one node or through Slurm, so the
+difference came from each block estimating its own fragment-length
+distribution. Since the blocks share block 1's estimate, `align_chunks=4` and
+`=1` give identical records (7.9M on one lane), so the setting no longer
+changes results.
+
+Two things vary between runs whatever the settings, and do not affect calls:
+which read pair of a tied duplicate set `bamsormadup` flags (the count is
+the same), and, with autosome chunks, how DeepVariant partitions `<*>`
+reference blocks.
+
+**Toy data** (`align_chunks=2` and two manually halved autosome chunks vs the
+default single-process run):
 
 - the 2400 paired reads are aligned identically (per-record comparison after
   sorting);
@@ -952,22 +1202,39 @@ chunks vs the default single-process run):
   `tools/filter_fastq.py <fq1> <fq2> <out1> <out2>`. It drops both mates of any
   pair whose `seqlen != quallen` while keeping R1/R2 in lockstep — pipe the
   decoder output (or run it once over your FASTQs) before mapping.
-- On Lustre-backed filesystems, staging the graph + indexes on node-local disk
-  (`cp` to `/tmp`) avoids long per-read lock stalls when `vg` maps against them;
-  the toy test data is tiny enough not to care.
+- On Lustre-backed filesystems, copy the graph + indexes to node-local disk
+  before mapping (see *Keep the graph and indexes on node-local disk*): several
+  nodes memory-mapping the same index files stall on lock traffic. The toy test
+  data is tiny enough not to care.
 - **Scratch space is the quiet requirement.** A 38x sample decodes to ~285 GB of
   FASTQ, KMC's KFF is another 23 GB, and cwltool stages inputs per job. Cluster
-  nodes routinely have a small node-local `/tmp` (23 GB on the box this was run
-  on), so point `--tmpdir-prefix` / `--tmp-outdir-prefix`, `TMPDIR` and
+  nodes can have a small node-local `/tmp` (23 GB on one box this was run on;
+  643 GB on the NIG `test` partition nodes), so point `--tmpdir-prefix` / `--tmp-outdir-prefix`, `TMPDIR` and
   `vg autoindex -T` at shared storage rather than letting them default.
 - **Memory is per giraffe process, not per run.** Each one holds the whole index
-  set resident — ~52 GB for the JaSaPaGe set (`min` 38 GB + `dist` 7.6 GB +
-  `gbz` 3.3 GB + `zipcodes` 2.6 GB). `align_chunks` multiplies that, and so does
-  any scheduler-level parallelism, so size both against the node rather than
-  against the core count.
-- **Read groups survive a CRAM/BAM only if you split it first.** The
-  aligned-reads track collapses the input to one lane and stamps the first `@RG`
-  on every read, because `samtools fastq` does not carry read groups. To keep a
-  sample's original lanes — and per-lane duplicate marking with them — split by
-  read group first (`samtools split -f '%!.cram'`) and pass the pieces as FASTQ
-  lanes with their own `@RG` strings.
+  set resident — ~52 GB of JaSaPaGe files (`min` 38 GB + `dist` 7.6 GB + `gbz`
+  3.3 GB + `zipcodes` 2.6 GB), ~77 GB measured with its `vg surject`.
+  `align_chunks` multiplies that, and so does any scheduler-level parallelism,
+  so size both against the node rather than against the core count.
+- **Tested on real data**: NA18945 (1000 Genomes 30x GRCh38 CRAM, 12 read
+  groups) subsampled to 10% (`samtools view -s 42.1`, ~78M reads), mapped onto
+  JaSaPaGe and surjected onto GRCh38 (`GRCh38.pansn.dict`), with the SV track,
+  on 128-core / 503 GB nodes via `scripts/submit-slurm.sh`: stage 1 (CRAM ->
+  12 lanes) ~4 min; the 12 lanes ~10 min on 5 nodes (32 threads each, indexes
+  on node-local disk); the calling job ~3 h, dominated by the single-chunk
+  autosome DeepVariant (set `autosome_chunks_count` to shorten it). A 20k-pair
+  spot check put 90.3% of chr20 pairs on the graph and 98.8% of mapped reads
+  within 10 bp of their bwa position.
+- The host `samtools` 1.19.2 of the Ubuntu 24.04 build writes the auxiliary tag
+  blocks of a CRAM uncompressed (a 10% subsample of a 16 GB CRAM came out at
+  4.7 GB; the image's samtools 1.15.1 wrote the same records in 1.6 GB). Write
+  test CRAMs with the image's samtools.
+- **Read groups of a CRAM/BAM are kept, one lane each.** `samtools fastq` does
+  not carry read groups, so when the header declares more than one `@RG` the
+  collated reads are first split by read group (`samtools split`) and each piece
+  is mapped as its own lane with its own `@RG`, keeping per-library duplicate
+  marking. Reads with a missing or undeclared RG go to an extra
+  `<prefix>_unassigned` lane. The split pieces are transient BAMs (level 1),
+  deleted as each lane's FASTQ is written, but at their peak they take roughly
+  one lightly compressed copy of the input on top of the FASTQs. A CRAM/BAM with
+  a single `@RG` (or none) is streamed straight to one lane as before.
