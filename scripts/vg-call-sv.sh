@@ -294,7 +294,18 @@ bcftools view -O z -o auto.vcf.gz -t "^${XNAME},${YNAME}" diploid.vcf.gz
 bcftools index -t auto.vcf.gz
 bcftools view -O z -o par.vcf.gz -R "$PAR_BED" diploid.vcf.gz
 bcftools index -t par.vcf.gz
-bcftools concat -a -O z -o "$MAIN" auto.vcf.gz par.vcf.gz
+# bcftools concat -a segfaults when every input is empty -- a sample (or a
+# personalized graph) with no graph SV on the autosomes or PAR -- so only the
+# parts that hold records are joined, and an empty result keeps the header.
+parts=()
+for f in auto.vcf.gz par.vcf.gz; do
+    [ "$(count "$f")" -gt 0 ] && parts+=( "$f" )
+done
+case "${#parts[@]}" in
+    0) bcftools view -h -O z -o "$MAIN" auto.vcf.gz ;;
+    1) bcftools view -O z -o "$MAIN" "${parts[0]}" ;;
+    *) bcftools concat -a -O z -o "$MAIN" "${parts[@]}" ;;
+esac
 bcftools index -t "$MAIN"
 annotate "$MAIN"
 
