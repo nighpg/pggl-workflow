@@ -487,6 +487,16 @@ scripts/submit-slurm.sh --job job.json --workdir /lustre/.../run1 \
   login node must be given by their cluster-wide name.
 - A failed lane task cancels the calling job (`--kill-on-invalid-dep`); fix the
   cause and resubmit. `--dry-run` writes the stage scripts without submitting.
+- The calling job runs cwltool with `--parallel`, so the autosome chunks
+  (`autosome_chunks_count`) and the PAR, chrX and chrY calls share the node as
+  their `coresMin` allows; `--no-call-parallel` runs them one after another,
+  which makes N chunks of `threads`/N shards take about N times as long as one
+  chunk with all of them.
+- `--from call` resubmits only stage 3 over the lanes an earlier run left in
+  the work dir (every `lanes/*/out.json` must exist), e.g. after a calling job
+  failed on a transient storage error or to call again with other options. It
+  clears `out/` and the stage-3 temporary directories first and appends the new
+  job to `jobs.tsv`.
 
 ## Self-contained SIF (no-setup on any host)
 

@@ -319,11 +319,23 @@ scripts/submit-slurm.sh \
 | `--call-sbatch "..."` | 段階 3 の sbatch オプション（`--mem` も必ず付ける） |
 | `--local-index DIR` | インデックスのローカルコピー先（既定 `/tmp`） |
 | `--variant gpu` | GPU 版（`--call-sbatch` に `--gres=gpu:N` などを足す） |
+| `--no-call-parallel` | 段階 3 の cwltool を `--parallel` なしで動かす（既定は並列。常染色体のチャンクと PAR・chrX・chrY の呼び出しが、`coresMin` に合わせてノードを分け合う） |
+| `--from call` | 段階 3 だけを投入し直す（前の実行のレーンの結果を再利用する） |
 
 > **sbatch オプションを自分で書くときは、必ず `--mem` を付けてください。**
 > パーティションの既定が「CPU あたり 8 GB」のような場合、`--exclusive` と 128 CPU で
 > 1 TB を要求したことになり、どのノードにも入らず `PENDING (Resources)` のまま
 > 動きません。
+
+段階 3 だけが失敗したとき（共有ストレージの一時的なエラーなど）や、呼び出しの設定を
+変えて呼び直したいときは、同じ `--job` と `--workdir` に `--from call` を付けて投入し直します。
+すべてのレーンの `lanes/*/out.json` がそろっている必要があります。前の `out/` と段階 3 の
+一時ディレクトリは消され、新しいジョブ ID が `jobs.tsv` に追記されます。
+
+```bash
+scripts/submit-slurm.sh --job job.json --workdir /lustre/…/runs/NA18945/run1 \
+  --partition <partition> --from call
+```
 
 ### 7.4 進捗を見る
 

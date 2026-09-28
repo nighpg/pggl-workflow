@@ -61,6 +61,15 @@
 #                        several nodes mapping the same files stall on lock
 #                        traffic.
 #   --no-local-index     map straight from the shared copies
+#   --no-call-parallel   run stage 3 with a serial cwltool. By default it runs
+#                        with --parallel, so the autosome chunks
+#                        (autosome_chunks_count) and the other DeepVariant calls
+#                        share the node as their coresMin allows; serially, N
+#                        chunks of threads/N shards each take ~N times as long
+#                        as one chunk with all of them.
+#   --from call          only (re)submit stage 3, reusing the lanes an earlier
+#                        run left in DIR (e.g. after changing the calling
+#                        options, or after a failed or cancelled calling job)
 #   --dry-run            write the stage scripts and jobs, submit nothing
 #
 # The workflow files are taken from this checkout (so the parts always match the
@@ -89,6 +98,8 @@ LOCAL_INDEX=/tmp
 LANE_THREADS=32
 LANE_CHUNKS=1
 LANE_MEM_PER_CHUNK=100
+CALL_PARALLEL=1
+FROM=
 DRY_RUN=0
 
 die() { echo "submit-slurm.sh: $*" >&2; exit 2; }
@@ -112,6 +123,8 @@ while [ "$#" -gt 0 ]; do
         --lane-mem-per-chunk) LANE_MEM_PER_CHUNK=$2; shift 2 ;;
         --lane-whole-node) LANE_THREADS=; LANE_CHUNKS=; shift ;;
         --no-local-index) LOCAL_INDEX=; shift ;;
+        --no-call-parallel) CALL_PARALLEL=0; shift ;;
+        --from) FROM=$2; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
         *) die "unknown option: $1" ;;
@@ -227,6 +240,7 @@ PART_OPT="$PART_OPT"
 ARRAY_LIMIT="$ARRAY_LIMIT"
 LANE_SBATCH="$LANE_SBATCH"
 CALL_SBATCH="$CALL_SBATCH"
+CALL_CWLTOOL_OPTS="$([ "$CALL_PARALLEL" = 1 ] && echo --parallel)"
 DRY_RUN=$DRY_RUN
 LOCAL_INDEX="$LOCAL_INDEX"
 INDEX_KEY=$INDEX_KEY
@@ -320,7 +334,7 @@ cat > "$W/3-call.sh" <<'EOF'
 #!/usr/bin/env bash
 source "__W__/env.sh"
 python3 "$HELPER" call "$W/job.json" "$W/prepare.out.json" "$W/lanes" "$PARTS/call-$VARIANT.cwl" "$W/call.job.json"
-run_part call "$PARTS/call-$VARIANT.cwl" "$W/call.job.json" "$W/out.json" --outdir "$W/out"
+run_part call "$PARTS/call-$VARIANT.cwl" "$W/call.job.json" "$W/out.json" --outdir "$W/out" $CALL_CWLTOOL_OPTS
 EOF
 # sbatch runs a spooled copy of each script, so they cannot find env.sh
 # relative to themselves; the work dir is written in instead.
@@ -328,6 +342,29 @@ sed -i "s#__W__#$W#" "$W/1-prepare.sh" "$W/2-lane.sh" "$W/3-call.sh"
 chmod +x "$W/1-prepare.sh" "$W/2-lane.sh" "$W/3-call.sh"
 
 NAME="pggl-$PREFIX"
+case "$FROM" in
+    "") ;;
+    call)
+        # Every lane must have finished; stage 3 reads their out.json files.
+        [ -d "$W/lanes" ] && ls "$W"/lanes/*/job.json >/dev/null 2>&1 \
+            || die "--from call: no lanes in $W (run the full pipeline first)"
+        for j in "$W"/lanes/*/job.json; do
+            [ -s "$(dirname "$j")/out.json" ] || die "--from call: lane $(basename "$(dirname "$j")") has no out.json"
+        done
+        if [ "$DRY_RUN" = 1 ]; then
+            echo "dry run: $W/3-call.sh rewritten, not submitted"
+            exit 0
+        fi
+        rm -rf "$W/out" "$W/out.json" "$W/tmp/call" "$W/tmp-out/call"
+        CALL_JOB=$(sbatch --parsable $PART_OPT $CALL_SBATCH --job-name="$NAME-call" \
+            --output="$W/logs/call.%j.out" --error="$W/logs/call.%j.err" \
+            "$W/3-call.sh")
+        printf 'call\t%s\n' "$CALL_JOB" >> "$W/jobs.tsv"
+        echo "submitted call job $CALL_JOB over the $(ls -d "$W"/lanes/*/ | wc -l) lanes in $W"
+        exit 0
+        ;;
+    *) die "--from takes: call" ;;
+esac
 if [ "$DRY_RUN" = 1 ]; then
     echo "dry run: stage scripts written to $W (run $W/1-prepare.sh by hand to test stage 1)"
     exit 0
