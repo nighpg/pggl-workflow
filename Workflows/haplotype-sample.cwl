@@ -84,6 +84,10 @@ inputs:
     doc: Choose the best pair of candidate haplotypes (vg's recommendation; wants >=20x coverage)
     default: true
 
+  num_haplotypes:
+    type: int?
+    doc: Candidate haplotypes for diploid sampling (vg haplotypes --num-haplotypes, default 32). Worth raising for graphs with many more haplotypes than HPRC v1.1.
+
   autoindex_target_mem:
     type: string?
     doc: Memory budget for vg autoindex (-M, e.g. 80G)
@@ -118,6 +122,7 @@ steps:
       prefix: prefix
       threads: threads
       diploid_sampling: diploid_sampling
+      num_haplotypes: num_haplotypes
     out:
       - personalized_gbz
 

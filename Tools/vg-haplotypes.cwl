@@ -81,9 +81,15 @@ inputs:
     doc: Pick the best pair of candidate haplotypes instead of the greedy set (vg's recommendation). It needs enough coverage to tell heterozygous from homozygous k-mers -- the vg wiki asks for 20x.
     default: true
 
+  num_haplotypes:
+    type: int?
+    doc: --num-haplotypes; the number of candidate haplotypes with diploid sampling (vg's default 32), else the number of haplotypes (default 4). Unset keeps vg's default.
+
 arguments:
   - position: 7
     valueFrom: '$(inputs.diploid_sampling ? "true" : "false")'
+  - position: 8
+    valueFrom: '$(inputs.num_haplotypes === null ? "" : String(inputs.num_haplotypes))'
 
 outputs:
   personalized_gbz:

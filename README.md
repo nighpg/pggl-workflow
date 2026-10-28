@@ -774,6 +774,12 @@ untouched by sampling, so they carry over verbatim.
   k-mer counting, so all lanes are counted as one sample.
 - `--diploid-sampling` is the vg wiki's recommendation, and it wants ≥20x
   coverage to tell heterozygous from homozygous k-mers.
+- `num_haplotypes` (optional) is `vg haplotypes --num-haplotypes`: with diploid
+  sampling, the number of candidates (vg's default 32) the best pair is picked
+  from. On the 738-haplotype combined graph, 32, 128 and 256 candidates gave the
+  same personalized graph for HG002 (GBZ sizes within 0.01%) and the same
+  accuracy, while `vg haplotypes` took 24, 75 and 107 minutes; leave it unset
+  unless a graph shows otherwise.
 - **`call_sv` changes meaning** (see *Structural variants*): only the sampled
   haplotypes' SVs are left to genotype, and the graph's own `.snarls` no longer
   describes the sampled graph, so it has to be recomputed per sample. Set

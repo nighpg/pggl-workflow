@@ -16,7 +16,12 @@
 # files that ship with some graphs).
 #
 # Usage: vg-haplotypes.sh <gbz> <hapl> <kff> <ref_sample> <prefix> <threads>
-#                         <diploid_sampling>
+#                         <diploid_sampling> [num_haplotypes]
+#
+# num_haplotypes is passed to --num-haplotypes; empty keeps vg's default (4
+# haplotypes, or 32 candidates with --diploid-sampling). The candidates are
+# chosen greedily per subchain before the best pair is picked, so a graph with
+# many more haplotypes than HPRC v1.1's 90 may need more of them.
 set -euo pipefail
 
 GBZ=$1
@@ -26,12 +31,14 @@ REF_SAMPLE=$4
 PREFIX=$5
 THREADS=$6
 DIPLOID=${7:-true}
+NUM_HAPLOTYPES=${8:-}
 
 OUT="${PREFIX}.personalized.gbz"
 
 ARGS=( -i "$HAPL" -k "$KFF" -g "$OUT" -t "$THREADS" --include-reference )
 [ -n "$REF_SAMPLE" ] && ARGS+=( --set-reference "$REF_SAMPLE" )
 [ "$DIPLOID" = "true" ] && ARGS+=( --diploid-sampling )
+[ -n "$NUM_HAPLOTYPES" ] && ARGS+=( --num-haplotypes "$NUM_HAPLOTYPES" )
 
 vg haplotypes -v 2 "${ARGS[@]}" "$GBZ"
 
