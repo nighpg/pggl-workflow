@@ -154,6 +154,20 @@ inputs:
     doc: Minimum traversal length for a graph site to be genotyped as an SV (vg call -c). 50 matches the usual SV definition; lower it to also emit smaller graph variants.
     default: 50
 
+  sv_exclude_bed:
+    type: File?
+    doc: Regions whose graph SV calls are left out of <prefix>.sv*.nonrep.vcf.gz, e.g. GIAB GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz. Given, it adds those filtered VCFs (simple DEL/INS the sample carries, PASS, QUAL >= sv_filter_min_qual, no overlap with the BED); unset, nothing changes. The SV VCFs themselves are never altered.
+
+  sv_filter_min_qual:
+    type: float
+    doc: Minimum QUAL for the .nonrep SV VCFs
+    default: 30
+
+  sv_filter_max_short_allele:
+    type: int
+    doc: For the .nonrep SV VCFs, a record is a simple deletion or insertion when its shorter allele (padding base included) is at most this long; longer ones (inversions, complex substitutions) are dropped
+    default: 10
+
 steps:
   # 1. Reads -> lanes (FASTQ pairs pass through; a CRAM/BAM is split by @RG).
   prepare:
@@ -212,13 +226,44 @@ steps:
       snarls: snarls
       keep_pack: keep_pack
       sv_min_length: sv_min_length
+      sv_exclude_bed: sv_exclude_bed
+      sv_filter_min_qual: sv_filter_min_qual
+      sv_filter_max_short_allele: sv_filter_max_short_allele
       sample_name: prepare/sample_name
       namecol_bams: align/namecol_bam
       gams: align/gam
       pack_gams: align/pack_gam
-    out: [bam, gam, sv_vcf, sv_vcf_chrX_female, sv_vcf_chrX_male, sv_vcf_chrY, pack, markdup_metrics, gvcf_autosome, gvcf_PAR, gvcf_chrX_female, gvcf_chrX_male, gvcf_chrY]
+    out: [bam, gam, sv_vcf, sv_vcf_chrX_female, sv_vcf_chrX_male, sv_vcf_chrY, sv_nonrep_vcf, sv_nonrep_vcf_chrX_female, sv_nonrep_vcf_chrX_male, sv_nonrep_vcf_chrY, pack, markdup_metrics, gvcf_autosome, gvcf_PAR, gvcf_chrX_female, gvcf_chrX_male, gvcf_chrY]
 
 outputs:
+  sv_nonrep_vcf:
+    type: File?
+    doc: Graph SVs of the autosomes and PAR kept by the sv_exclude_bed filter (simple DEL/INS outside the excluded regions; produced when call_sv is true and sv_exclude_bed is given)
+    outputSource: call/sv_nonrep_vcf
+    secondaryFiles:
+      - .tbi
+
+  sv_nonrep_vcf_chrX_female:
+    type: File?
+    doc: As sv_nonrep_vcf, chrX outside PAR, diploid
+    outputSource: call/sv_nonrep_vcf_chrX_female
+    secondaryFiles:
+      - .tbi
+
+  sv_nonrep_vcf_chrX_male:
+    type: File?
+    doc: As sv_nonrep_vcf, chrX outside PAR, haploid
+    outputSource: call/sv_nonrep_vcf_chrX_male
+    secondaryFiles:
+      - .tbi
+
+  sv_nonrep_vcf_chrY:
+    type: File?
+    doc: As sv_nonrep_vcf, chrY outside PAR, haploid
+    outputSource: call/sv_nonrep_vcf_chrY
+    secondaryFiles:
+      - .tbi
+
   bam:
     type: File?
     doc: BAM duplicate-marked, in reference coordinates (materialised when keep_bam is true)

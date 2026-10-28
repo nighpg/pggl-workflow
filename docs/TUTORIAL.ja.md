@@ -365,6 +365,7 @@ NA18945.bam (+.bai)                     重複マーク済み BAM（GRCh38 座�
 NA18945.markdup.metrics
 NA18945.{autosome,PAR,chrX_female,chrX_male,chrY}.g.vcf.gz (+.tbi)
 NA18945.sv.vcf.gz, .sv.chrX_female/.sv.chrX_male/.sv.chrY.vcf.gz (+.tbi)   call_sv=true のとき
+NA18945.sv*.nonrep.vcf.gz (+.tbi)       sv_exclude_bed を渡したとき（反復配列の外の単純な DEL/INS）
 ```
 
 作業ディレクトリには中間ファイル（`prepare-out/` の FASTQ、`lanes/*/out/` のレーン

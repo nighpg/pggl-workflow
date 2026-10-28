@@ -122,6 +122,20 @@ inputs:
     doc: Lane GAMs for the sample-wide vg pack; empty turns the SV track off (call_sv=false)
     default: []
 
+  sv_exclude_bed:
+    type: File?
+    doc: Regions whose graph SV calls are left out of <prefix>.sv*.nonrep.vcf.gz, e.g. GIAB GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz. Given, it adds those filtered VCFs (simple DEL/INS the sample carries, PASS, QUAL >= sv_filter_min_qual, no overlap with the BED); unset, nothing changes. The SV VCFs themselves are never altered.
+
+  sv_filter_min_qual:
+    type: float
+    doc: Minimum QUAL for the .nonrep SV VCFs
+    default: 30
+
+  sv_filter_max_short_allele:
+    type: int
+    doc: For the .nonrep SV VCFs, a record is a simple deletion or insertion when its shorter allele (padding base included) is at most this long; longer ones (inversions, complex substitutions) are dropped
+    default: 10
+
 steps:
   pick_pack_gam:
     run: ../../Tools/pick-gam.cwl
@@ -169,6 +183,23 @@ steps:
       - sv_vcf_chrX_female
       - sv_vcf_chrX_male
       - sv_vcf_chrY
+
+  filter_sv_nonrep:
+    run: ../../Tools/sv-filter-nonrep.cwl
+    in:
+      sv_vcf: call_sv_step/sv_vcf
+      sv_vcf_chrX_female: call_sv_step/sv_vcf_chrX_female
+      sv_vcf_chrX_male: call_sv_step/sv_vcf_chrX_male
+      sv_vcf_chrY: call_sv_step/sv_vcf_chrY
+      exclude_bed: sv_exclude_bed
+      min_qual: sv_filter_min_qual
+      max_short_allele: sv_filter_max_short_allele
+      min_length: sv_min_length
+    out:
+      - nonrep_vcf
+      - nonrep_vcf_chrX_female
+      - nonrep_vcf_chrX_male
+      - nonrep_vcf_chrY
 
   pick_gam:
     run: ../../Tools/pick-gam.cwl
@@ -296,6 +327,34 @@ steps:
       - gvcf
 
 outputs:
+  sv_nonrep_vcf:
+    type: File?
+    doc: Graph SVs of the autosomes and PAR kept by the sv_exclude_bed filter (simple DEL/INS outside the excluded regions; produced when call_sv is true and sv_exclude_bed is given)
+    outputSource: filter_sv_nonrep/nonrep_vcf
+    secondaryFiles:
+      - .tbi
+
+  sv_nonrep_vcf_chrX_female:
+    type: File?
+    doc: As sv_nonrep_vcf, chrX outside PAR, diploid
+    outputSource: filter_sv_nonrep/nonrep_vcf_chrX_female
+    secondaryFiles:
+      - .tbi
+
+  sv_nonrep_vcf_chrX_male:
+    type: File?
+    doc: As sv_nonrep_vcf, chrX outside PAR, haploid
+    outputSource: filter_sv_nonrep/nonrep_vcf_chrX_male
+    secondaryFiles:
+      - .tbi
+
+  sv_nonrep_vcf_chrY:
+    type: File?
+    doc: As sv_nonrep_vcf, chrY outside PAR, haploid
+    outputSource: filter_sv_nonrep/nonrep_vcf_chrY
+    secondaryFiles:
+      - .tbi
+
   bam:
     type: File?
     doc: BAM duplicate-marked, in reference coordinates (materialised when keep_bam is true)

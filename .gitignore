@@ -14,3 +14,6 @@ tool-images/
 # python bytecode
 __pycache__/
 *.pyc
+
+# GIAB repeat BED fetched by scripts/fetch-giab-repeat-bed.sh
+interval_files/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz

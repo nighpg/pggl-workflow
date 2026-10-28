@@ -155,6 +155,8 @@ missing keys and paths early.
 <prefix>.sv.chrX_female.vcf.gz   (+ .tbi)  diploid   (chrX outside PAR)
 <prefix>.sv.chrX_male.vcf.gz     (+ .tbi)  haploid   (chrX outside PAR)
 <prefix>.sv.chrY.vcf.gz          (+ .tbi)  haploid
+<prefix>.sv[.chrX_female|.chrX_male|.chrY].nonrep.vcf.gz (+ .tbi)
+                                           simple DEL/INS outside sv_exclude_bed (only when sv_exclude_bed is given)
 <prefix>.pack                              sample-wide read support (only when keep_pack=true)
 ```
 
@@ -1077,6 +1079,44 @@ Notes and limits:
   Should a subpath contig nevertheless reach the VCF, the run fails rather than
   emit fragment-relative positions that silently disagree with the BAM.
 
+### SVs outside repeats (`sv_exclude_bed`)
+
+Short reads genotype graph SVs well where the sequence is unique and badly
+inside tandem repeats: a VNTR longer than a read cannot have its copies counted,
+and k-mers cannot tell its alleles apart. On HG002 (GIAB v5.0q, truvari refine)
+84% of the SVs every short-read method missed were in tandem repeats, and the
+738-haplotype combined graph lost accuracy against JaSaPaGe there and nowhere
+else. Giving `sv_exclude_bed` adds `<prefix>.sv*.nonrep.vcf.gz` files that keep
+only what the pipeline calls reliably (`scripts/filter-sv-nonrep.sh`):
+
+1. multi-allelic records split, only alleles the sample carries kept;
+2. `FILTER` PASS and `QUAL >= sv_filter_min_qual` (30);
+3. `|ALT - REF| >= sv_min_length`;
+4. simple deletions and insertions: the shorter of REF and ALT at most
+   `sv_filter_max_short_allele` (10) bp, which drops inversions and complex
+   substitutions;
+5. no overlap of the record's REF span with `sv_exclude_bed`.
+
+`vg call` only genotypes alleles that are in the graph, so every record is a
+known allele of the graph's panel. The SV VCFs themselves are left as they were.
+The intended BED is GIAB's `GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz`
+(stratifications v3.6), which `scripts/fetch-giab-repeat-bed.sh` downloads into
+`interval_files/`.
+
+On HG002, inside the v5.0q benchmark regions with that BED removed (personalized
+graphs):
+
+| Graph | Precision | Recall | F1 |
+| --- | --- | --- | --- |
+| JaSaPaGe_GRCh38 (40 haplotypes) | 0.986 | 0.895 | 0.938 |
+| combined (738 haplotypes) | 0.975 | 0.906 | 0.939 |
+| For comparison, all regions, JaSaPaGe | 0.828 | 0.671 | 0.741 |
+
+Inside the remaining region, calls below QUAL 30 had precision 0.29-0.88 and
+complex calls 0.77-0.92, which is what steps 2 and 4 remove. The region holds
+about 16% of HG002's SVs: the output is precise but deliberately partial, and
+repeat SVs are outside its scope.
+
 A self-contained toy fixture lives in `tests/toy_sv/` (a 200 bp deletion, a
 150 bp insertion and a 120 bp deletion, all heterozygous):
 
@@ -1088,6 +1128,11 @@ cwltool --no-container --outdir tests/toy_sv/demo_out \
 cwltool --no-container --outdir tests/toy_sv/demo_out \
   Workflows/germline-pangenome-cpu.cwl tests/toy_sv/jobs/toy_sv_dict_job.json
 ```
+
+Adding `"sv_exclude_bed": {"class": "File", "path": "<bed with chr20 1700 1900>"}`
+to `toy_sv_job.json` keeps the chr20 deletion and the chrX deletion in the
+`.nonrep` files and drops the insertion at chr20:1800; the plain SV VCFs stay
+identical to `demo_out/`.
 
 ## Parallelisation
 
