@@ -1,0 +1,49 @@
+{
+ "description": "combined: minigraph-cactus, 738 haplotypes (GRCh38, CHM13, JaSaPaGe, HPRC r2, KPanRef, APR, CPC). Map to a personalized graph: the full graph maps >10x slower than JaSaPaGe. On HG002 outside tandem repeats (personalized graph): SV precision 0.975, recall 0.906.",
+ "germline": {
+  "gbz": {
+   "class": "File",
+   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.filter.gbz"
+  },
+  "dist": {
+   "class": "File",
+   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.filter.dist"
+  },
+  "min": {
+   "class": "File",
+   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.filter.min"
+  },
+  "zipcodes": {
+   "class": "File",
+   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.filter.zipcodes"
+  },
+  "snarls": {
+   "class": "File",
+   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.filter.snarls"
+  },
+  "ref": {
+   "class": "File",
+   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.ref.fa"
+  },
+  "ref_paths": {
+   "class": "File",
+   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.ref.pansn.dict"
+  },
+  "ref_path_prefix": "GRCh38#0#"
+ },
+ "haplotype_sample": {
+  "gbz": {
+   "class": "File",
+   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.clip.gbz"
+  },
+  "hapl": {
+   "class": "File",
+   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.clip.hapl"
+  },
+  "ref_sample": "GRCh38"
+ },
+ "sv_exclude_bed": {
+  "class": "File",
+  "path": "/lustre9/open/home/ykawai-sv/project/pggl-workflow/interval_files/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
+ }
+}

@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Fill a job file's graph inputs from a graph preset (examples/graphs/<name>.json).
+
+A sample's job file says where its reads are and what to call; the graph a run uses
+is a separate choice with eight to ten inputs that must belong together (the giraffe
+indexes, the snarls, the reference FASTA and paths, and for haplotype sampling the
+clip graph and its .hapl). This script writes them in from one preset, so switching
+graph is switching preset.
+
+  apply-graph.py germline PRESET JOB OUT
+      JOB with the preset's full graph (and its sv_exclude_bed when the preset
+      has one and JOB does not set it).
+  apply-graph.py haplotype-sample PRESET JOB OUT [--threads N]
+      A Workflows/haplotype-sample.cwl job: JOB's fq1/fq2 and prefix with the
+      preset's clip graph and .hapl.
+  apply-graph.py personalized PRESET JOB GRAPH_PREFIX OUT
+      JOB mapping to a personalized graph (GRAPH_PREFIX.{gbz,dist,min,zipcodes,
+      snarls}, as haplotype-sample.cwl writes them) while keeping the preset's
+      reference FASTA and paths: sampling keeps the reference paths, so those
+      stay the graph release's.
+
+Keys JOB already sets are overwritten for the graph inputs and kept for everything else.
+"""
+import argparse, json, os, sys
+
+GRAPH_KEYS = ("gbz", "dist", "min", "zipcodes", "snarls")
+
+
+def load(path):
+    with open(path) as fh:
+        return json.load(fh)
+
+
+def check(job):
+    missing = [v["path"] for v in job.values() if isinstance(v, dict) and v.get("class") == "File" and not os.path.exists(v["path"])]
+    for p in missing:
+        print(f"apply-graph.py: warning: {p} does not exist", file=sys.stderr)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("mode", choices=("germline", "haplotype-sample", "personalized"))
+    ap.add_argument("preset")
+    ap.add_argument("job")
+    ap.add_argument("rest", nargs="+", help="OUT, or GRAPH_PREFIX OUT for personalized")
+    ap.add_argument("--threads", type=int, help="threads for the haplotype-sample job (default: the job's)")
+    a = ap.parse_args()
+    preset, job = load(a.preset), load(a.job)
+
+    if a.mode == "germline":
+        (out,) = a.rest
+        job.update(preset["germline"])
+        if "sv_exclude_bed" in preset:
+            job.setdefault("sv_exclude_bed", preset["sv_exclude_bed"])
+    elif a.mode == "haplotype-sample":
+        (out,) = a.rest
+        if "fq1" not in job:
+            sys.exit("apply-graph.py: haplotype-sample needs a job with fq1/fq2 (k-mers are counted from FASTQ)")
+        job = {k: job[k] for k in ("fq1", "fq2", "prefix") if k in job}
+        job.update(preset["haplotype_sample"])
+        job["threads"] = a.threads or load(a.job).get("threads", 16)
+        job.setdefault("diploid_sampling", True)
+        job.setdefault("make_snarls", True)
+    else:
+        prefix, out = a.rest
+        job.update({k: v for k, v in preset["germline"].items() if k not in GRAPH_KEYS})
+        job.update({k: {"class": "File", "path": os.path.abspath(f"{prefix}.{k}")} for k in GRAPH_KEYS})
+        if "sv_exclude_bed" in preset:
+            job.setdefault("sv_exclude_bed", preset["sv_exclude_bed"])
+    check(job)
+    with open(out, "w") as fh:
+        json.dump(job, fh, indent=1)
+        fh.write("\n")
+    print(f"wrote {out} ({a.mode}, {os.path.basename(a.preset)})")
+
+
+if __name__ == "__main__":
+    main()

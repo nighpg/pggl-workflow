@@ -1,0 +1,49 @@
+{
+ "description": "JaSaPaGe_GRCh38: minigraph-cactus, 40 haplotypes (Japanese assemblies) + GRCh38 reference paths. On HG002 outside tandem repeats (personalized graph): SV precision 0.986, recall 0.895.",
+ "germline": {
+  "gbz": {
+   "class": "File",
+   "path": "/lustre9/open/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.gbz"
+  },
+  "dist": {
+   "class": "File",
+   "path": "/lustre9/open/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.dist"
+  },
+  "min": {
+   "class": "File",
+   "path": "/lustre9/open/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.min"
+  },
+  "zipcodes": {
+   "class": "File",
+   "path": "/lustre9/open/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.zipcodes"
+  },
+  "snarls": {
+   "class": "File",
+   "path": "/lustre9/open/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.snarls"
+  },
+  "ref": {
+   "class": "File",
+   "path": "/lustre9/open/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.ref.fa"
+  },
+  "ref_paths": {
+   "class": "File",
+   "path": "/lustre9/open/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.ref.pansn.dict"
+  },
+  "ref_path_prefix": "GRCh38#0#"
+ },
+ "haplotype_sample": {
+  "gbz": {
+   "class": "File",
+   "path": "/lustre9/open/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.clip.gbz"
+  },
+  "hapl": {
+   "class": "File",
+   "path": "/lustre9/open/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.clip.hapl"
+  },
+  "ref_sample": "GRCh38"
+ },
+ "sv_exclude_bed": {
+  "class": "File",
+  "path": "/lustre9/open/home/ykawai-sv/project/pggl-workflow/interval_files/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
+ }
+}

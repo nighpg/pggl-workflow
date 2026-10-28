@@ -227,6 +227,36 @@ clipped is centromeric/satellite sequence. Per contig the lowest non-N coverage
 is chr21 89.8%, chrY 91.2%, chr18 93.2%, chr9 94.2%. The CHM13v2 backbone is
 complete, so this is the price of staying in GRCh38 coordinates.
 
+## Choosing a graph
+
+A graph is a set of inputs that must belong together: the giraffe indexes, the
+snarls, the reference FASTA and paths, and for haplotype sampling the clip graph
+and its `.hapl`. `examples/graphs/<name>.json` holds one such set per graph
+release, and `scripts/apply-graph.py` writes it into a sample's job file, so
+choosing a graph is choosing a preset:
+
+```bash
+# the full graph
+scripts/apply-graph.py germline examples/graphs/JaSaPaGe_GRCh38.json sample.json job.json
+# a personalized graph: sample it, then map to it with the release's reference
+scripts/apply-graph.py haplotype-sample examples/graphs/combined.json sample.json hs.json --threads 128
+cwltool ... Workflows/haplotype-sample.cwl hs.json          # writes <prefix>.personalized.*
+scripts/apply-graph.py personalized examples/graphs/combined.json sample.json \
+    graph/<prefix>.personalized job.json
+```
+
+The presets also set `sv_exclude_bed` (kept if the job sets its own). The two
+graphs measured on HG002:
+
+| Preset | Haplotypes | Mapping | SVs outside repeats (P / R) | Notes |
+| --- | --- | --- | --- | --- |
+| `JaSaPaGe_GRCh38` | 40 | full or personalized | 0.986 / 0.895 | best inside repeats too |
+| `combined` | 738 | **personalized only** | 0.975 / 0.906 | more known alleles (GRCh38, CHM13, JaSaPaGe, HPRC r2, KPanRef, APR, CPC) |
+
+Mapping to the full combined graph works but is more than ten times slower than
+JaSaPaGe (80 GB per giraffe process), about two days for a 35x genome on one
+node; sampling a personalized graph from it takes about two hours.
+
 ## Behind the scenes (design notes)
 
 - **Contig names**: giraffe writes full PanSN path names (`GRCh38#0#chr1`) into `@SQ`. The workflows strip the prefix on the header only (`samtools reheader -c 'sed ...'`), so the output BAM/CRAM matches `Homo_sapiens_assembly38.fasta` and existing interval BEDs.
@@ -1101,7 +1131,7 @@ only what the pipeline calls reliably (`scripts/filter-sv-nonrep.sh`):
 known allele of the graph's panel. The SV VCFs themselves are left as they were.
 The intended BED is GIAB's `GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz`
 (stratifications v3.6), which `scripts/fetch-giab-repeat-bed.sh` downloads into
-`interval_files/`.
+`interval_files/` and the graph presets (see *Choosing a graph*) point to.
 
 On HG002, inside the v5.0q benchmark regions with that BED removed (personalized
 graphs):

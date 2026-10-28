@@ -275,6 +275,26 @@ T2T-CHM13 座標で出したい場合は、`ref_paths` を CHM13 のパス一覧
 を `CHM13v2#0#`、interval BED を `interval_files/chm13_t2t/`、`ref` をグラフから
 取り出した CHM13 の FASTA にします（README の *Preparing a graph*）。
 
+### グラフを選ぶ
+
+グラフごとの入力（giraffe のインデックス、snarls、参照 FASTA とパス、personalized graph
+用の clip グラフと `.hapl`、SV の除外 BED）は `examples/graphs/<名前>.json` にまとめてあり、
+`scripts/apply-graph.py` で job ファイルに書き込めます。グラフの切り替えは、使うファイルを
+変えるだけです。
+
+```bash
+scripts/apply-graph.py germline examples/graphs/JaSaPaGe_GRCh38.json sample.json job.json
+# combined（738 ハプロタイプ）は personalized graph で使う（全体グラフへのマップは 10 倍以上遅い）
+scripts/apply-graph.py haplotype-sample examples/graphs/combined.json sample.json hs.json --threads 128
+scripts/apply-graph.py personalized examples/graphs/combined.json sample.json graph/NA18945.personalized job.json
+```
+
+除外 BED（GIAB の反復配列とホモポリマー）は初回に `scripts/fetch-giab-repeat-bed.sh` で
+`interval_files/` に取得します。`sv_exclude_bed` を指定すると、`.nonrep.vcf.gz`
+（反復配列の外の単純な DEL/INS、QUAL 30 以上）が追加で出力されます。HG002 では
+この範囲で Precision 0.975〜0.986、Recall 0.895〜0.906 でしたが、範囲に入る SV は全体の
+約 16% です。
+
 ### 7.2 投入せずに確認する（dry run）
 
 ```bash
