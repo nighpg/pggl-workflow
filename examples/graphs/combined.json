@@ -3,47 +3,47 @@
  "germline": {
   "gbz": {
    "class": "File",
-   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.filter.gbz"
+   "path": "/usr/local/shared_data/visc/data/combined_GRCh38/release/combined.filter.gbz"
   },
   "dist": {
    "class": "File",
-   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.filter.dist"
+   "path": "/usr/local/shared_data/visc/data/combined_GRCh38/release/combined.filter.dist"
   },
   "min": {
    "class": "File",
-   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.filter.min"
+   "path": "/usr/local/shared_data/visc/data/combined_GRCh38/release/combined.filter.min"
   },
   "zipcodes": {
    "class": "File",
-   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.filter.zipcodes"
+   "path": "/usr/local/shared_data/visc/data/combined_GRCh38/release/combined.filter.zipcodes"
   },
   "snarls": {
    "class": "File",
-   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.filter.snarls"
+   "path": "/usr/local/shared_data/visc/data/combined_GRCh38/release/combined.filter.snarls"
   },
   "ref": {
    "class": "File",
-   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.ref.fa"
+   "path": "/usr/local/shared_data/visc/data/combined_GRCh38/release/combined.ref.fa"
   },
   "ref_paths": {
    "class": "File",
-   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.ref.pansn.dict"
+   "path": "/usr/local/shared_data/visc/data/combined_GRCh38/release/combined.ref.pansn.dict"
   },
   "ref_path_prefix": "GRCh38#0#"
  },
  "haplotype_sample": {
   "gbz": {
    "class": "File",
-   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.clip.gbz"
+   "path": "/usr/local/shared_data/visc/data/combined_GRCh38/release/combined.clip.gbz"
   },
   "hapl": {
    "class": "File",
-   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.clip.hapl"
+   "path": "/usr/local/shared_data/visc/data/combined_GRCh38/release/combined.clip.hapl"
   },
   "ref_sample": "GRCh38"
  },
  "sv_exclude_bed": {
   "class": "File",
-  "path": "/lustre9/open/home/ykawai-sv/project/pggl-workflow/interval_files/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
+  "path": "/usr/local/shared_data/visc/data/pggl-workflow/interval_files/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
  }
 }

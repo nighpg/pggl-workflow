@@ -89,9 +89,10 @@ A job file is the CWL job order: the inputs above as JSON. The same file drives
 a single-node `cwltool` run and `scripts/submit-slurm.sh`.
 
 - Files are `{"class": "File", "path": "..."}`; a relative path is relative to
-  the job file. Use paths every node can see: `/usr/local/shared_data` exists
-  on the login node only, the same tree is `/lustre9/open/shared_data` on the
-  compute nodes.
+  the job file. Use paths every node can see. The shared data tree is
+  `/usr/local/shared_data`, also mounted as `/lustre9/open/shared_data` on the
+  online cluster; the graph presets use the `/usr/local/shared_data` form, the
+  only one the offline GPU cluster has.
 - Secondary files are not listed: they are found next to the main file.
   `ref` needs `<name>.fai` and `<name without .fa>.dict`; a `.crai` next to the
   CRAM is used when present.

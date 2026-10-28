@@ -14,6 +14,62 @@ Everything else (`scripts/stage-sif-assets.sh`, the `.def` files) works unchange
 `stage-sif-assets.sh` just learned to read its inputs from a bundle and to refuse
 to touch the network when `PGGL_OFFLINE=1`.
 
+## Shared-data install (the NIG offline GPU cluster)
+
+Where the offline cluster mounts the same `/usr/local/shared_data` as the online
+one, no bundle is needed: everything lives in one shared tree, and the graph
+presets (`examples/graphs/*.json`) already point into it.
+
+```
+/usr/local/shared_data/visc/data/
+├── JaSaPaGe_GRCh38/release/   graph, giraffe indexes, clip graph + .hapl, ref FASTA
+├── combined_GRCh38/release/   the same for the 738-haplotype combined graph
+└── pggl-workflow/
+    ├── repo/pggl-workflow/    a clone of this repository (run from here)
+    ├── sif/                   deepvariant-opencode-cpu-vg.sif
+    │                          deepvariant-pangenome-aware-cpu-vg.sif
+    │                          parabricks-vg.sif
+    ├── interval_files/        GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz
+    └── SHA256SUMS
+```
+
+Write paths in the `/usr/local/shared_data` form: the online cluster also
+mounts the tree as `/lustre9/open/shared_data`, the offline one does not.
+`scripts/submit-slurm.sh` binds `/usr/local/shared_data` into the container for
+inputs under it (it never binds the whole `/usr`).
+
+On the offline cluster, from the shared clone, with a work directory on storage
+that cluster can write to:
+
+```bash
+R=/usr/local/shared_data/visc/data/pggl-workflow
+cd $R/repo/pggl-workflow
+
+# JaSaPaGe, full graph
+scripts/apply-graph.py germline examples/graphs/JaSaPaGe_GRCh38.json sample.json job.json
+scripts/submit-slurm.sh --job job.json --workdir /path/to/run \
+    --sif $R/sif/deepvariant-opencode-cpu-vg.sif --partition <partition>
+
+# GPU DeepVariant: the same, with
+#   --variant parabricks --sif $R/sif/parabricks-vg.sif \
+#   --call-sbatch "--exclusive --mem=0 --cpus-per-task=<threads> --gres=gpu:<N>"
+# and "num_gpus": <N> in job.json. Only the calling job uses GPUs.
+
+# combined graph: sample a personalized graph first (CPU), then map to it
+scripts/apply-graph.py haplotype-sample examples/graphs/combined.json sample.json hs.json
+#   run Workflows/haplotype-sample.cwl on hs.json inside the CPU SIF
+#   (cwltool command: *Haplotype sampling* in the README)
+scripts/apply-graph.py personalized examples/graphs/combined.json sample.json <graph prefix> job.json
+```
+
+Check once on the GPU nodes that the driver is recent enough for Parabricks
+4.8 (CUDA 12), and compare one benchmark sample against the CPU DeepVariant
+before switching production runs to `--variant parabricks`.
+
+To update the install, pull in the shared clone from the online side
+(`git -C $R/repo/pggl-workflow pull`), and replace a SIF only together with
+its `SHA256SUMS` line.
+
 ## 1. On the online host
 
 ```bash
