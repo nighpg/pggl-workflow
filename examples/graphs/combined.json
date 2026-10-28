@@ -3,42 +3,42 @@
  "germline": {
   "gbz": {
    "class": "File",
-   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.filter.gbz"
+   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.filter.gbz"
   },
   "dist": {
    "class": "File",
-   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.filter.dist"
+   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.filter.dist"
   },
   "min": {
    "class": "File",
-   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.filter.min"
+   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.filter.min"
   },
   "zipcodes": {
    "class": "File",
-   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.filter.zipcodes"
+   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.filter.zipcodes"
   },
   "snarls": {
    "class": "File",
-   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.filter.snarls"
+   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.filter.snarls"
   },
   "ref": {
    "class": "File",
-   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.ref.fa"
+   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.ref.fa"
   },
   "ref_paths": {
    "class": "File",
-   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.ref.pansn.dict"
+   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.ref.pansn.dict"
   },
   "ref_path_prefix": "GRCh38#0#"
  },
  "haplotype_sample": {
   "gbz": {
    "class": "File",
-   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.clip.gbz"
+   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.clip.gbz"
   },
   "hapl": {
    "class": "File",
-   "path": "/lustre9/open/home/ykawai-sv/project/pggl-graph-work/builds/combined/release/combined.clip.hapl"
+   "path": "/lustre9/open/shared_data/visc/data/combined_GRCh38/release/combined.clip.hapl"
   },
   "ref_sample": "GRCh38"
  },
