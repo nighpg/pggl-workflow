@@ -194,11 +194,17 @@ tops = set()
 for p in paths:
     for q in (p, os.path.realpath(p)):
         parts = q.split("/")
-        if len(parts) > 1 and parts[1]:
+        if len(parts) < 2 or not parts[1]:
+            continue
+        if parts[1] in ("usr", "opt"):
+            # the image has its own /usr and /opt: bind a directory three
+            # levels down (/usr/local/shared_data), never the whole tree
+            if len(parts) > 4 and parts[3]:
+                tops.add("/".join(parts[:4]))
+        elif parts[1] not in ("etc", "proc", "sys", "dev"):
             tops.add("/" + parts[1])
 for t in sorted(tops):
-    if t not in ("/usr", "/opt", "/etc", "/proc", "/sys", "/dev"):
-        print(t)
+    print(t)
 PY
 )
 BIND_ARGS=""
