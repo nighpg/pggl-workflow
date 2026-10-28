@@ -339,6 +339,7 @@ scripts/submit-slurm.sh \
 | `--call-sbatch "..."` | 段階 3 の sbatch オプション（`--mem` も必ず付ける） |
 | `--local-index DIR` | インデックスのローカルコピー先（既定 `/tmp`） |
 | `--variant gpu` | GPU 版（`--call-sbatch` に `--gres=gpu:N` などを足す） |
+| `--variant parabricks` | NVIDIA Parabricks の DeepVariant（`--sif parabricks-vg.sif`、`--call-sbatch` に `--gres=gpu:N`、job に `"num_gpus": N`）。GPU での検証はまだなので、本番の前に chr20 などで CPU 版と比較する |
 | `--no-call-parallel` | 段階 3 の cwltool を `--parallel` なしで動かす（既定は並列。常染色体のチャンクと PAR・chrX・chrY の呼び出しが、`coresMin` に合わせてノードを分け合う） |
 | `--from call` | 段階 3 だけを投入し直す（前の実行のレーンの結果を再利用する） |
 

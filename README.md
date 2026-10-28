@@ -14,6 +14,7 @@ unchanged.
 | --- | --- | --- | --- |
 | `Workflows/germline-pangenome-cpu.cwl` | `vg giraffe` (one job per read group, CWL scatter) | DeepVariant (`google/deepvariant:1.10.0`) | Portable; runs without containers when tools are on `$PATH` |
 | `Workflows/germline-pangenome-gpu.cwl` | `vg giraffe` (CPU, same as above) | DeepVariant GPU (`google/deepvariant:1.10.0-gpu`) | Identical inputs/outputs to the CPU workflow; the five DeepVariant steps run on the GPU (auto-detected when CUDA is visible). Requires a CUDA driver on the host and a container started with GPU passthrough (`singularity exec --nv ...`) |
+| `Workflows/germline-pangenome-parabricks.cwl` | `vg giraffe` (CPU, same as above) | NVIDIA Parabricks DeepVariant (`pbrun deepvariant`, `nvcr.io/nvidia/clara/clara-parabricks:4.8.0-1`) | Identical inputs/outputs to the CPU workflow plus `num_gpus`; Parabricks accelerates make_examples as well as call_variants. Needs an NVIDIA GPU host, `--nv`, and the image from `sif-build-parabricks.def`. Not validated on GPUs yet: benchmark a sample before production use (see *Parabricks track*) |
 | `Workflows/germline-pangenome-pangenome-aware-cpu.cwl` | `vg giraffe` (CPU, same as above) | pangenome-aware DeepVariant (`google/deepvariant:pangenome_aware_deepvariant-1.10.0`) | Same inputs and outputs, but the caller also sees the graph's haplotypes (see *Pangenome-aware calling*). Needs its own image: the pangenome-aware one ships no plain `run_deepvariant`. **Only works on a graph whose reference is whole paths** — not JaSaPaGe's GRCh38 |
 | `Workflows/haplotype-sample.cwl` | — | — | Preparation, not a germline run: builds a sample's personalized pangenome and its giraffe indexes for any of the above to then use (see *Haplotype sampling*) |
 
@@ -374,6 +375,48 @@ and `samtools` must both be on `$PATH` under `--no-container`).
 
 The GPU workflow additionally uses `google/deepvariant:1.10.0-gpu` for the
 five variant-calling steps (`vg giraffe` and `samtools` stay on CPU).
+
+### Parabricks track
+
+`Workflows/germline-pangenome-parabricks.cwl` swaps the five DeepVariant steps
+for NVIDIA Parabricks' `pbrun deepvariant` (`Tools/parabricks-deepvariant.cwl`,
+`Workflows/parts/call-parabricks.cwl`). Its inputs are the CPU workflow's plus
+`num_gpus` (GPUs per call, default 1). The run_deepvariant arguments the call
+parts set are translated by `scripts/parabricks-deepvariant.sh`:
+
+| run_deepvariant | pbrun deepvariant |
+| --- | --- |
+| `--regions <bed>` | `--interval-file <bed>` |
+| `--output_gvcf` | `--gvcf` (plain VCF written alongside) |
+| `--make_examples_extra_args=--min_mapping_quality=0` | `--min-mapping-quality 0` |
+| `--make_examples_extra_args=--normalize_reads=true` | `--normalize-reads` |
+| `--postprocess_variants_extra_args=--haploid_contigs=chrX` | `--haploid-contigs chrX` |
+| `--model_type WGS` / `WES` | default / `--use-wes-model` |
+
+Any other extra argument stops the step instead of being dropped. PAR needs no
+`--par_regions_bed` (which pbrun lacks): the workflow calls PAR as its own
+diploid interval. The pangenome-aware caller has no Parabricks counterpart.
+Mapping, duplicate marking and the graph SVs stay on CPU; Parabricks' own
+`pbrun giraffe` writes BAM only, while the SV track needs giraffe's GAM.
+
+The image (`sif-build-parabricks.def`) layers the pipeline's tools on the
+Parabricks image and takes samtools/bcftools from the CPU image, so every
+variant uses the same versions. Build it where nvcr.io is reachable and carry
+the one file to the GPU cluster:
+
+```bash
+./scripts/stage-sif-assets.sh
+apptainer build --fakeroot parabricks-vg.sif sif-build-parabricks.def   # ~6 GB
+# on the GPU cluster
+scripts/submit-slurm.sh --job job.json --workdir run1 --partition gpu \
+  --variant parabricks --sif parabricks-vg.sif \
+  --call-sbatch "--exclusive --mem=0 --gres=gpu:2"      # and "num_gpus": 2 in job.json
+```
+
+The workflow, tool and image are checked with `cwltool --validate` and the
+image's `%test`, but have not run on a GPU here: Parabricks reimplements
+DeepVariant, so compare a benchmark sample (e.g. HG002 chr20 against the CPU
+track) before switching production runs.
 
 ### Keep the graph and indexes on node-local disk
 

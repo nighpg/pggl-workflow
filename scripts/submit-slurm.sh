@@ -21,7 +21,10 @@
 #   scripts/submit-slurm.sh --job JOB.json --workdir DIR [options]
 #
 # Options:
-#   --variant V          cpu (default), gpu or pangenome-aware-cpu
+#   --variant V          cpu (default), gpu, parabricks or pangenome-aware-cpu
+#                        (parabricks needs --sif with pbrun, see
+#                        sif-build-parabricks.def, and GPUs for the call job:
+#                        --call-sbatch "... --gres=gpu:N" and num_gpus in the job)
 #   --sif FILE           image to run cwltool and the tools in
 #                        (default: deepvariant-opencode-cpu-vg.sif in the repo)
 #   --apptainer FILE     apptainer/singularity binary (default: first on PATH,
@@ -136,8 +139,8 @@ done
 [ -f "$JOB" ] || die "no such job file: $JOB"
 [ -f "$SIF" ] || die "no such image: $SIF"
 case "$VARIANT" in
-    cpu|gpu|pangenome-aware-cpu) ;;
-    *) die "--variant must be cpu, gpu or pangenome-aware-cpu" ;;
+    cpu|gpu|parabricks|pangenome-aware-cpu) ;;
+    *) die "--variant must be cpu, gpu, parabricks or pangenome-aware-cpu" ;;
 esac
 if [ -z "$APPTAINER" ]; then
     APPTAINER=$(command -v apptainer 2>/dev/null \
@@ -203,7 +206,7 @@ for b in "${AUTO_BINDS[@]}" "${BINDS[@]+"${BINDS[@]}"}" /tmp ${LOCAL_INDEX:+"$LO
     BIND_ARGS+=" --bind $b"
 done
 GPU_ARG=""
-[ "$VARIANT" = gpu ] && GPU_ARG=" --nv"
+case "$VARIANT" in gpu|parabricks) GPU_ARG=" --nv" ;; esac
 
 PART_OPT=""
 [ -n "$PARTITION" ] && PART_OPT="--partition=$PARTITION"

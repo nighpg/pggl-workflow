@@ -1,0 +1,200 @@
+# Self-contained NVIDIA Parabricks pangenome environment for the germline workflow
+#
+# NVIDIA Parabricks 4.8.0-1 (pbrun deepvariant on the GPU) + vg + node + cwltool +
+# biobambam2 + kmc + the pangenome CWL workflow tree, with samtools/bcftools/htslib
+# taken from the CPU image so every variant uses the same versions. The five
+# DeepVariant steps of Workflows/germline-pangenome-parabricks.cwl run pbrun;
+# mapping, duplicate marking and the graph-SV track stay on CPU. Requires:
+#   - an NVIDIA GPU host meeting Parabricks' requirements (driver/CUDA, GPU memory)
+#   - apptainer/singularity started with --nv
+#
+# Build on a host that can pull nvcr.io (the image then goes to the offline
+# cluster as one file):
+#
+#   ./scripts/stage-sif-assets.sh            # sif-stage/ + image/ build assets
+#   # deepvariant-opencode-cpu-vg.sif must be in the repo root (stage "tools")
+#   apptainer build --fakeroot parabricks-vg.sif sif-build-parabricks.def
+#
+# Offline, the second bootstrap can point at a local copy of the base image:
+#   apptainer pull clara-parabricks_4.8.0-1.sif docker://nvcr.io/nvidia/clara/clara-parabricks:4.8.0-1
+#   sed 's|^Bootstrap: docker$|Bootstrap: localimage|; s|^From: nvcr.io/.*|From: clara-parabricks_4.8.0-1.sif|' \
+#       sif-build-parabricks.def > local.def
+#
+# Usage on a GPU host:
+#
+#   apptainer exec --nv parabricks-vg.sif /opt/pangenome/run-pangenome-parabricks.sh \
+#     <the same inputs as germline-pangenome-cpu.cwl> --num_gpus 2 --outdir out/
+#   or scripts/submit-slurm.sh --variant parabricks --sif parabricks-vg.sif \
+#     --call-sbatch "--exclusive --mem=0 --gres=gpu:2" ...
+
+Bootstrap: localimage
+From: deepvariant-opencode-cpu-vg.sif
+Stage: tools
+
+Bootstrap: docker
+From: nvcr.io/nvidia/clara/clara-parabricks:4.8.0-1
+Stage: final
+
+%files from tools
+    /opt/conda/envs/bio /opt/conda/envs/bio
+
+%files
+    sif-stage/vg /usr/local/bin/vg
+    sif-stage/node /usr/local/node-v20.18.0-linux-x64
+    sif-stage/wheels /opt/cwltool-wheels
+    sif-stage/biobambam2 /opt/biobambam2
+    sif-stage/kmc /opt/kmc
+    Workflows /opt/pangenome/Workflows
+    Tools /opt/pangenome/Tools
+    scripts /opt/pangenome/scripts
+    tools /opt/pangenome/tools
+    interval_files /opt/pangenome/interval_files
+    image/opencode /opt/opencode-stage
+
+%post
+    set -eux
+
+    test -s /usr/local/bin/vg
+    test -s /usr/local/node-v20.18.0-linux-x64/bin/node
+    test -n "$(ls /opt/cwltool-wheels)"
+
+    # bamsormadup (biobambam2) for the markdup stage. Its jammy shared libs
+    # (libmaus2*, libgpgme, libnettle) ship in /opt/biobambam2/lib; the wrapper
+    # exposes them to the binary without polluting the system lib dirs.
+    test -x /opt/biobambam2/bin/bamsormadup
+    test -n "$(ls -A /opt/biobambam2/lib)"
+    ! LD_LIBRARY_PATH=/opt/biobambam2/lib ldd /opt/biobambam2/bin/bamsormadup | grep -q 'not found'
+
+    # kmc counts the sample k-mers that drive haplotype sampling
+    # (Workflows/haplotype-sample.cwl); it needs no private libraries.
+    test -x /opt/kmc/kmc
+    ln -sf /opt/kmc/kmc /usr/local/bin/kmc
+    ln -sf /opt/kmc/kmc_tools /usr/local/bin/kmc_tools
+    kmc 2>&1 | head -1
+
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/node /usr/local/bin/node
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/npm /usr/local/bin/npm
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/npx /usr/local/bin/npx
+    ln -sf /usr/local/node-v20.18.0-linux-x64/bin/corepack /usr/local/bin/corepack
+    node --version
+
+    python3 -m pip install --no-index --find-links /opt/cwltool-wheels \
+        cwltool==3.2.20260720092025
+
+    # Parabricks present, and the samtools/bcftools of the CPU image
+    test -x /usr/local/parabricks/pbrun
+    test -x /opt/conda/envs/bio/bin/samtools && test -x /opt/conda/envs/bio/bin/bcftools
+    test -f /opt/pangenome/tools/filter_fastq.py
+
+    # opencode (OPTIONAL dev tool, not used by the pipeline): installed offline
+    # from the baseline tarball when scripts/stage-sif-assets.sh found one in
+    # image/opencode/.  The official curl installer downloads a build that needs
+    # glibc >= 2.34, so the *baseline* binary is the right one here.
+    if [ -s /opt/opencode-stage/opencode-linux-x64-baseline.tar.gz ]; then
+        mkdir -p /tmp/opencode-install
+        tar -xzf /opt/opencode-stage/opencode-linux-x64-baseline.tar.gz -C /tmp/opencode-install
+        test -s /tmp/opencode-install/opencode
+        install -m 0755 /tmp/opencode-install/opencode /usr/local/bin/opencode
+        rm -rf /tmp/opencode-install
+        command -v opencode
+        opencode --version
+    else
+        echo "opencode tarball not staged - building without it (optional)"
+    fi
+    rm -rf /opt/opencode-stage
+
+    cat > /opt/pangenome/run-pangenome-parabricks.sh <<'LAUNCHER'
+#!/bin/bash
+# Runs the bundled workflow with the tools inside this image (no container
+# layer). cwltool only accepts its own options *before* the workflow path,
+# while workflow inputs go after it, so the runner options are hoisted out of
+# the command line here: --outdir, --parallel, --tmpdir-prefix, ... can be
+# written anywhere, including at the end as the README does
+# (`... --prefix SAMPLE --outdir out/`). Everything else is passed through to
+# the workflow untouched; `--` forces the rest to be workflow inputs.
+set -euo pipefail
+
+WF=/opt/pangenome/Workflows/germline-pangenome-parabricks.cwl
+RUNNER=()
+INPUTS=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --outdir|--tmpdir-prefix|--tmp-outdir-prefix|--cachedir|--log-dir|\
+        --max-ram|--max-cores|--timeout|--singularity-cache)
+            if [ "$#" -lt 2 ]; then
+                echo "$(basename "$0"): $1 needs a value" >&2
+                exit 2
+            fi
+            RUNNER+=( "$1" "$2" )
+            shift 2
+            ;;
+        --outdir=*|--tmpdir-prefix=*|--tmp-outdir-prefix=*|--cachedir=*|\
+        --log-dir=*|--max-ram=*|--max-cores=*|--timeout=*)
+            RUNNER+=( "$1" )
+            shift
+            ;;
+        -p|--parallel|--debug|--quiet|--verbose|--timestamps|--leave-tmpdir|\
+        --rm-tmpdir|--js-console|--relax-path-checks|--strict|--non-strict|\
+        --validate|--print-deps)
+            RUNNER+=( "$1" )
+            shift
+            ;;
+        --)
+            shift
+            INPUTS+=( "$@" )
+            break
+            ;;
+        *)
+            INPUTS+=( "$1" )
+            shift
+            ;;
+    esac
+done
+
+exec cwltool --no-container ${RUNNER[@]+"${RUNNER[@]}"} "$WF" ${INPUTS[@]+"${INPUTS[@]}"}
+LAUNCHER
+    chmod +x /opt/pangenome/run-pangenome-parabricks.sh
+
+    rm -rf /opt/cwltool-wheels
+
+    cat > /usr/local/bin/bamsormadup <<'WRAP'
+#!/bin/bash
+export LD_LIBRARY_PATH=/opt/biobambam2/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+exec /opt/biobambam2/bin/bamsormadup "$@"
+WRAP
+    chmod +x /usr/local/bin/bamsormadup
+
+    command -v vg cwltool node pbrun samtools bcftools bamsormadup
+    vg version
+    cwltool --version
+    node --version
+
+%environment
+    export PATH=/usr/local/bin:/opt/conda/envs/bio/bin:/usr/local/parabricks:$PATH
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+    export NVIDIA_VISIBLE_DEVICES=all
+    export NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+%runscript
+    exec "$@"
+
+%test
+    command -v vg cwltool node pbrun samtools bcftools bamsormadup
+    test -x /opt/biobambam2/bin/bamsormadup
+    ! LD_LIBRARY_PATH=/opt/biobambam2/lib ldd /opt/biobambam2/bin/bamsormadup | grep -q 'not found'
+    cwltool --validate --no-container \
+        /opt/pangenome/Workflows/germline-pangenome-parabricks.cwl
+    test -x /opt/pangenome/run-pangenome-parabricks.sh
+    test -f /opt/pangenome/tools/filter_fastq.py
+
+    # opencode is optional (see %post); only exercised when it was staged.
+    if command -v opencode >/dev/null; then
+        export HOME=/tmp/opencode-test-home
+        export XDG_CONFIG_HOME="${HOME}/.config"
+        export XDG_CACHE_HOME="${HOME}/.cache"
+        export XDG_DATA_HOME="${HOME}/.local/share"
+        export XDG_STATE_HOME="${HOME}/.local/state"
+        mkdir -p "${XDG_CONFIG_HOME}" "${XDG_CACHE_HOME}" "${XDG_DATA_HOME}" "${XDG_STATE_HOME}"
+        opencode --version
+    fi
