@@ -194,7 +194,8 @@ srun -p <partition> -c 1 --mem=1G ls -l /shared/…/ref/JaSaPaGe/ /shared/…/re
 
 ## 6. toy データで Slurm の動作を確認する
 
-本番の前に、数分で終わる toy データで Slurm の 3 段階の連携を確かめます。
+本番の前に、10 分ほどで終わる toy データで Slurm の 3 段階の連携を確かめます
+（実測: prepare 12 秒、レーン各 7 秒、call 約 7 分半）。
 
 ```bash
 cd /shared/…/pggl-workflow
@@ -341,7 +342,7 @@ scripts/submit-slurm.sh \
 | `--call-sbatch "..."` | 段階 3 の sbatch オプション（`--mem` も必ず付ける） |
 | `--local-index DIR` | インデックスのローカルコピー先（既定 `/tmp`） |
 | `--variant gpu` | GPU 版（`--call-sbatch` に `--gres=gpu:N` などを足す） |
-| `--variant parabricks` | NVIDIA Parabricks の DeepVariant（`--sif parabricks-vg.sif`、`--call-sbatch` に `--gres=gpu:N`、job に `"num_gpus": N`）。GPU での検証はまだなので、本番の前に chr20 などで CPU 版と比較する |
+| `--variant parabricks` | NVIDIA Parabricks の DeepVariant（`--sif parabricks-vg.sif`、`--call-sbatch` に `--gres=gpu:N`、job に `"num_gpus": N`）。7.6 を参照 |
 | `--no-call-parallel` | 段階 3 の cwltool を `--parallel` なしで動かす（既定は並列。常染色体のチャンクと PAR・chrX・chrY の呼び出しが、`coresMin` に合わせてノードを分け合う） |
 | `--from call` | 段階 3 だけを投入し直す（前の実行のレーンの結果を再利用する） |
 
@@ -393,6 +394,81 @@ NA18945.sv*.nonrep.vcf.gz (+.tbi)       sv_exclude_bed を渡したとき（反�
 
 作業ディレクトリには中間ファイル（`prepare-out/` の FASTQ、`lanes/*/out/` のレーン
 BAM・GAM）が残ります。結果を確認したら削除してかまいません。
+
+### 7.6 Parabricks（GPU）で呼び出す
+
+GPU ノードがあれば、段階 3 の DeepVariant を NVIDIA Parabricks の `pbrun deepvariant`
+に替えられます。GPU を使うのは段階 3 だけで、マッピング・重複マーク・SV は CPU の
+ままです。pangenome-aware DeepVariant には Parabricks 版がありません。
+
+**イメージを用意する（オンライン側）。** Parabricks のイメージは nvcr.io から取るので、
+オフラインのバンドル（手順 2）には入りません。オンライン側で作り、1 ファイルを
+転送します。CPU のイメージ（`deepvariant-opencode-cpu-vg.sif`）から samtools と
+bcftools を取り込むので、先に CPU のイメージをリポジトリ直下に置いておきます。
+
+```bash
+cd pggl-workflow
+./scripts/stage-sif-assets.sh
+apptainer build --fakeroot --ignore-fakeroot-command parabricks-vg.sif sif-build-parabricks.def
+# parabricks-vg.sif（約 3.3 GB）をエアギャップ側の共有ストレージへ転送する
+sha256sum parabricks-vg.sif > parabricks-vg.sif.sha256
+```
+
+ビルドの最後に、イメージの中で CWL の検証（`%test`）が走ります。
+
+**GPU ノードを確かめる（エアギャップ側）。** Parabricks 4.8 は CUDA 12 に対応した
+ドライバが要ります。
+
+```bash
+srun -p <GPUパーティション> --gres=gpu:1 -c 1 --mem=4G \
+  apptainer exec --nv /shared/…/parabricks-vg.sif nvidia-smi
+```
+
+**toy で動作を確かめる。** 手順 6 と同じ toy データで、段階 3 だけ GPU で動かします。
+
+```bash
+cd /shared/…/pggl-workflow
+scripts/submit-slurm.sh \
+  --job tests/toy/jobs/toy_cram_job.json \
+  --workdir /shared/…/runs/toy-parabricks \
+  --partition <GPUパーティション> \
+  --variant parabricks --sif /shared/…/parabricks-vg.sif \
+  --prepare-sbatch "--cpus-per-task=2 --mem=8G" \
+  --lane-threads 4 --lane-mem-per-chunk 8 \
+  --call-sbatch "--cpus-per-task=8 --mem=32G --gres=gpu:1"
+```
+
+成功の基準は手順 6 と同じです（3 つとも `COMPLETED`、`out/` に 13 ファイル）。
+マッピングを CPU のパーティションで回したいときは、`--partition` を CPU 用にして、
+`--call-sbatch` に `-p <GPUパーティション>` を加えます。
+
+**実データで投入する。** job ファイルに `"num_gpus": <N>` を加え、次のように投入します。
+
+```bash
+scripts/submit-slurm.sh \
+  --job /shared/…/runs/NA18945/job.json \
+  --workdir /shared/…/runs/NA18945/run-pb \
+  --partition <GPUパーティション> \
+  --variant parabricks --sif /shared/…/parabricks-vg.sif \
+  --call-sbatch "--exclusive --mem=0 --gres=gpu:<N>"
+```
+
+**CPU 版と比べる。** Parabricks は DeepVariant を再実装したもので、結果はほぼ同じですが
+ビット単位では一致しません。本番を切り替える前に、ベンチマーク試料（HG002 など）で
+CPU 版と比べてください。マッピングをやり直す必要はなく、CPU 版の作業ディレクトリの
+レーンの結果を `--from call` で再利用できます。`--from call` は前の `out/` を消すので、
+先に退避します。
+
+```bash
+W=/shared/…/runs/HG002/run1                      # CPU 版で実行済み
+mv $W/out $W/out-cpu
+scripts/submit-slurm.sh --job job.json --workdir $W --partition <GPUパーティション> \
+  --from call --variant parabricks --sif /shared/…/parabricks-vg.sif \
+  --call-sbatch "--exclusive --mem=0 --gres=gpu:<N>"
+```
+
+> Parabricks の経路は、CWL の検証と仮の `pbrun` を使った toy の実行までは確かめて
+> いますが、実際の GPU ではまだ動かしていません。
 
 ### 所要時間の目安（実測）
 
