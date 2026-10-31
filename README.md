@@ -6,7 +6,7 @@ unchanged.
 
 - **Same contract**: identical inputs (FASTQ pairs + `@RG` strings + 4 interval BEDs + `prefix`), identical output layout (alignment BAM + 5 ploidy-aware gVCFs), GRCh38 coordinates.
 - **Surjection at the aligner**: reads are mapped to the graph and projected onto the GRCh38 reference paths; everything downstream (`samtools`, DeepVariant, Manta, CNVkit, ...) stays linear.
-- **CWL first**: the CWL files are the source of truth; see the design deck `docs/WGSpipeline-pangenome-concept_1.pptx` for the full rationale.
+- **CWL first**: the CWL files are the source of truth.
 
 ## Workflow
 
