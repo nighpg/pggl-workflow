@@ -10,10 +10,9 @@
 # Sources are tried in this order:
 #   1. $PGGL_SRC            (explicit; e.g. an unpacked offline bundle)
 #   2. ./offline-bundle     (created by scripts/fetch-offline-bundle.sh)
-#   3. /path/to/hackathon (the original working repo)
-#   4. the original downloads (GitHub releases + nodejs.org + pip + the Ubuntu
+#   3. the original downloads (GitHub releases + nodejs.org + pip + the Ubuntu
 #      jammy archive + `apptainer build docker://google/deepvariant:1.10.0`)
-# Set PGGL_OFFLINE=1 to forbid step 4 (air-gapped hosts): the script then fails
+# Set PGGL_OFFLINE=1 to forbid step 3 (air-gapped hosts): the script then fails
 # with a clear message instead of hanging on a download.  Set
 # PGGL_SKIP_BASE_SIF=1 to stage only the build inputs on a host without
 # apptainer/singularity.  No docker is required anywhere.
@@ -21,13 +20,8 @@
 #   ./scripts/stage-sif-assets.sh
 set -euo pipefail
 
-if [ -n "${PGGL_SRC:-}" ]; then
-    SRC="${PGGL_SRC}"
-elif [ -d offline-bundle ]; then
-    SRC="offline-bundle"
-else
-    SRC="/path/to/hackathon"
-fi
+# a missing ./offline-bundle simply finds nothing and falls through to downloads
+SRC="${PGGL_SRC:-offline-bundle}"
 OFFLINE="${PGGL_OFFLINE:-0}"
 
 VG_VERSION="v1.70.0"

@@ -9,7 +9,7 @@
 #
 # Build on a HOST (singularity is not available inside a container):
 #
-#   cd /path/to/pggl-workflow
+#   cd pggl-workflow                # a checkout of this repository
 #   ./scripts/stage-sif-assets.sh   # stage sif-stage/ + image/ build assets
 #   singularity build deepvariant-opencode-cpu-vg.sif sif-build.def
 #

@@ -11,7 +11,7 @@
 # Build on a HOST that can pull the docker image (needs singularity/apptainer
 # with --fakeroot or docker):
 #
-#   cd /path/to/pggl-workflow
+#   cd pggl-workflow                # a checkout of this repository
 #   ./scripts/stage-sif-assets.sh   # stage sif-stage/ + image/ build assets
 #   singularity build deepvariant-opencode-gpu-vg.sif sif-build-gpu.def
 #
