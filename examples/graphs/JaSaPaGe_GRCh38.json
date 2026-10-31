@@ -3,47 +3,47 @@
  "germline": {
   "gbz": {
    "class": "File",
-   "path": "/usr/local/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.gbz"
+   "path": "JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.gbz"
   },
   "dist": {
    "class": "File",
-   "path": "/usr/local/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.dist"
+   "path": "JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.dist"
   },
   "min": {
    "class": "File",
-   "path": "/usr/local/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.min"
+   "path": "JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.min"
   },
   "zipcodes": {
    "class": "File",
-   "path": "/usr/local/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.zipcodes"
+   "path": "JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.zipcodes"
   },
   "snarls": {
    "class": "File",
-   "path": "/usr/local/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.snarls"
+   "path": "JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.filter.snarls"
   },
   "ref": {
    "class": "File",
-   "path": "/usr/local/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.ref.fa"
+   "path": "JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.ref.fa"
   },
   "ref_paths": {
    "class": "File",
-   "path": "/usr/local/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.ref.pansn.dict"
+   "path": "JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.ref.pansn.dict"
   },
   "ref_path_prefix": "GRCh38#0#"
  },
  "haplotype_sample": {
   "gbz": {
    "class": "File",
-   "path": "/usr/local/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.clip.gbz"
+   "path": "JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.clip.gbz"
   },
   "hapl": {
    "class": "File",
-   "path": "/usr/local/shared_data/visc/data/JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.clip.hapl"
+   "path": "JaSaPaGe_GRCh38/release/JaSaPaGe_GRCh38.clip.hapl"
   },
   "ref_sample": "GRCh38"
  },
  "sv_exclude_bed": {
   "class": "File",
-  "path": "/usr/local/shared_data/visc/data/pggl-workflow/interval_files/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
+  "path": "interval_files/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz"
  }
 }

@@ -20,10 +20,33 @@ graph is switching preset.
       stay the graph release's.
 
 Keys JOB already sets are overwritten for the graph inputs and kept for everything else.
+
+Paths in a preset are relative to where the graph releases are installed, given
+with --data-root DIR (or $PGGL_DATA): JaSaPaGe_GRCh38/release/... resolves to
+DIR/JaSaPaGe_GRCh38/release/.... A relative path missing there is looked up in
+this checkout instead, which is where scripts/fetch-giab-repeat-bed.sh puts the
+repeat BED (interval_files/). Absolute paths are used as they are.
 """
 import argparse, json, os, sys
 
 GRAPH_KEYS = ("gbz", "dist", "min", "zipcodes", "snarls")
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def resolve(preset, data_root):
+    """Turn the preset's relative File paths into absolute ones."""
+    def fix(v):
+        if isinstance(v, dict):
+            if v.get("class") == "File" and not os.path.isabs(v["path"]):
+                cands = ([os.path.join(data_root, v["path"])] if data_root else []) + [os.path.join(REPO, v["path"])]
+                found = next((c for c in cands if os.path.exists(c)), None)
+                if found is None and not data_root:
+                    sys.exit(f"apply-graph.py: {v['path']} is relative to the graph data; "
+                             "give --data-root DIR or set PGGL_DATA")
+                return dict(v, path=os.path.abspath(found or cands[0]))
+            return {k: fix(x) for k, x in v.items()}
+        return v
+    return fix(preset)
 
 
 def load(path):
@@ -44,8 +67,10 @@ def main():
     ap.add_argument("job")
     ap.add_argument("rest", nargs="+", help="OUT, or GRAPH_PREFIX OUT for personalized")
     ap.add_argument("--threads", type=int, help="threads for the haplotype-sample job (default: the job's)")
+    ap.add_argument("--data-root", default=os.environ.get("PGGL_DATA"),
+                    help="directory the preset's relative paths are under (default: $PGGL_DATA)")
     a = ap.parse_args()
-    preset, job = load(a.preset), load(a.job)
+    preset, job = resolve(load(a.preset), a.data_root), load(a.job)
 
     if a.mode == "germline":
         (out,) = a.rest
