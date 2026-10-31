@@ -97,6 +97,13 @@ a single-node `cwltool` run and `scripts/submit-slurm.sh`.
 - In `rg`, write the tabs as `\\t` (JSON-escaped backslash + t). Lane IDs
   must be unique; `SM` names the sample in the SV VCF.
 - Inputs with a default can be left out.
+- Templates: `examples/jobs/sample.cram.json` and `sample.fastq.json` hold the
+  sample's side of a job (reads, interval BEDs, prefix, threads, SVs). Copy
+  one, fill in the reads and prefix, and let `scripts/apply-graph.py` add the
+  graph (*Choosing a graph*). The templates name the interval BEDs as
+  `interval_files/...`, which `apply-graph.py` resolves in the checkout, so a
+  copy works from any directory; run the templates through it rather than
+  handing them to cwltool directly.
 
 A CRAM against JaSaPaGe, surjected onto GRCh38, with the SV track:
 
@@ -233,7 +240,8 @@ A graph is a set of inputs that must belong together: the giraffe indexes, the
 snarls, the reference FASTA and paths, and for haplotype sampling the clip graph
 and its `.hapl`. `examples/graphs/<name>.json` holds one such set per graph
 release, and `scripts/apply-graph.py` writes it into a sample's job file, so
-choosing a graph is choosing a preset. A preset's paths are relative to where
+choosing a graph is choosing a preset (`sample.json` below is a copy of a
+template from `examples/jobs/`). A preset's paths are relative to where
 the releases are installed (`<data root>/JaSaPaGe_GRCh38/release/...`), given
 with `--data-root` or `$PGGL_DATA`; the repeat BED is found in the checkout's
 `interval_files/` once `scripts/fetch-giab-repeat-bed.sh` has fetched it.

@@ -1,0 +1,11 @@
+{
+ "cram": {"class": "File", "path": "/path/to/SAMPLE.cram"},
+ "autosome_interval": {"class": "File", "path": "interval_files/autosome.bed"},
+ "PAR_interval": {"class": "File", "path": "interval_files/PAR.bed"},
+ "chrX_interval": {"class": "File", "path": "interval_files/chrX.bed"},
+ "chrY_interval": {"class": "File", "path": "interval_files/chrY.bed"},
+ "prefix": "SAMPLE",
+ "threads": 128,
+ "autosome_chunks_count": 8,
+ "call_sv": true
+}

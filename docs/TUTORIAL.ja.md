@@ -230,7 +230,19 @@ ls $W/out/                                        # 13 ファイル
 
 ### 7.1 job ファイルを書く
 
-例として、1000 Genomes の CRAM を JaSaPaGe にマップし GRCh38 に surject、
+サンプル側の項目だけのテンプレートが `examples/jobs/` にあります。
+
+| テンプレート | 入力 |
+| --- | --- |
+| `sample.cram.json` | CRAM（read group ごとにレーンに分けます） |
+| `sample.fastq.json` | レーンごとの FASTQ の組と `@RG` 文字列 |
+
+コピーしてリードのパスと `prefix` を書き換え、`scripts/apply-graph.py` でグラフの入力を
+加えます（下の「グラフを選ぶ」）。区間 BED は `interval_files/...` と書いてあり、
+`apply-graph.py` がリポジトリの中の絶対パスに直すので、コピーはどこに置いてもかまいません。
+テンプレートは `apply-graph.py` を通してから使います（cwltool に直接は渡せません）。
+
+グラフの入力も含めて全部を手で書く場合の例として、1000 Genomes の CRAM を JaSaPaGe にマップし GRCh38 に surject、
 グラフ SV もジェノタイプする設定です（`/shared/…/runs/NA18945/job.json`）。
 
 ```json

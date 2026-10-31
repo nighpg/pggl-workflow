@@ -50,22 +50,24 @@ cp $R/interval_files/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz $R/repo
 R=/usr/local/shared_data/visc/data/pggl-workflow
 export PGGL_DATA=/usr/local/shared_data/visc/data
 cd $R/repo/pggl-workflow
+W=/path/to/work                                  # 自分の作業ディレクトリ（clone の中には書けません）
+cp examples/jobs/sample.cram.json $W/sample.json # または sample.fastq.json。リードのパスと prefix を書き換える
 
 # JaSaPaGe、全体グラフ
-scripts/apply-graph.py germline examples/graphs/JaSaPaGe_GRCh38.json sample.json job.json
-scripts/submit-slurm.sh --job job.json --workdir /path/to/run \
+scripts/apply-graph.py germline examples/graphs/JaSaPaGe_GRCh38.json $W/sample.json $W/job.json
+scripts/submit-slurm.sh --job $W/job.json --workdir $W/run \
     --sif $R/sif/deepvariant-opencode-cpu-vg.sif --partition <partition>
 
-# Parabricks（GPU）で呼び出す場合は、上に次を加え、job.json に "num_gpus": <N> を書く
+# Parabricks（GPU）で呼び出す場合は、上に次を加え、$W/job.json に "num_gpus": <N> を書く
 #   --variant parabricks --sif $R/sif/parabricks-vg.sif \
 #   --call-sbatch "--exclusive --mem=0 --cpus-per-task=<threads> --gres=gpu:<N>"
 # GPU を使うのは呼び出しのジョブだけです。
 
 # combined グラフ: personalized グラフを作ってから使う
-scripts/apply-graph.py haplotype-sample examples/graphs/combined.json sample.json hs.json --threads 128
-#   hs.json で Workflows/haplotype-sample.cwl を CPU の SIF の中で実行
+scripts/apply-graph.py haplotype-sample examples/graphs/combined.json $W/sample.json $W/hs.json --threads 128
+#   $W/hs.json で Workflows/haplotype-sample.cwl を CPU の SIF の中で実行
 #   （コマンドは README の *Haplotype sampling*）
-scripts/apply-graph.py personalized examples/graphs/combined.json sample.json <出力 prefix> job.json
+scripts/apply-graph.py personalized examples/graphs/combined.json $W/sample.json <出力 prefix> $W/job.json
 ```
 
 `--dry-run` をつけると、ジョブを投入せずに `<workdir>/env.sh` と各段階のスクリプトを

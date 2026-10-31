@@ -20,6 +20,10 @@ graph is switching preset.
       stay the graph release's.
 
 Keys JOB already sets are overwritten for the graph inputs and kept for everything else.
+Relative paths in JOB are taken relative to JOB itself, or, when nothing is
+there, relative to this checkout, and written out absolute. The templates in
+examples/jobs/ name the interval BEDs as interval_files/..., so a copy of one
+works from any directory.
 
 Paths in a preset are relative to where the graph releases are installed, given
 with --data-root DIR (or $PGGL_DATA): JaSaPaGe_GRCh38/release/... resolves to
@@ -49,6 +53,20 @@ def resolve(preset, data_root):
     return fix(preset)
 
 
+def absolutize(v, base):
+    """Make the job's relative File paths absolute: against the job file's
+    directory, else against the checkout."""
+    if isinstance(v, list):
+        return [absolutize(x, base) for x in v]
+    if isinstance(v, dict):
+        v = {k: absolutize(x, base) for k, x in v.items()}
+        if v.get("class") == "File" and not os.path.isabs(v["path"]):
+            here, repo = (os.path.normpath(os.path.join(d, v["path"])) for d in (base, REPO))
+            v["path"] = repo if not os.path.exists(here) and os.path.exists(repo) else here
+        return v
+    return v
+
+
 def load(path):
     with open(path) as fh:
         return json.load(fh)
@@ -70,7 +88,8 @@ def main():
     ap.add_argument("--data-root", default=os.environ.get("PGGL_DATA"),
                     help="directory the preset's relative paths are under (default: $PGGL_DATA)")
     a = ap.parse_args()
-    preset, job = resolve(load(a.preset), a.data_root), load(a.job)
+    preset = resolve(load(a.preset), a.data_root)
+    job = absolutize(load(a.job), os.path.dirname(os.path.abspath(a.job)))
 
     if a.mode == "germline":
         (out,) = a.rest
