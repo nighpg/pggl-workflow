@@ -66,8 +66,25 @@ esac
 TMPDIR_LOCAL="$(pwd)/bamsormadup_tmp"
 mkdir -p "$TMPDIR_LOCAL"
 
+# bamsormadup writes one temporary file per thread and merges them with 8
+# blocks open per file, so it holds about 8 x threads files open at once: 1,020
+# for 128 threads, past the common default limit of 1,024 ("Too many open
+# files"). Raise the soft limit as far as the node allows, then cap the
+# threads to what fits under it.
+ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+NOFILE=$(ulimit -n)
+SORT_THREADS=$THREADS
+if [ "$NOFILE" != unlimited ]; then
+  MAX_THREADS=$(( (NOFILE - 64) / 9 ))
+  [ "$MAX_THREADS" -ge 1 ] || MAX_THREADS=1
+  if [ "$SORT_THREADS" -gt "$MAX_THREADS" ]; then
+    echo "open-file limit ${NOFILE}: bamsormadup runs ${MAX_THREADS} threads instead of ${THREADS}" >&2
+    SORT_THREADS=$MAX_THREADS
+  fi
+fi
+
 bamsormadup \
-  threads="$THREADS" \
+  threads="$SORT_THREADS" \
   level="$LEVEL" \
   inputformat=bam \
   outputformat=bam \
