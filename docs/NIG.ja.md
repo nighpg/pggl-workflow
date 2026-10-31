@@ -70,6 +70,16 @@ scripts/apply-graph.py haplotype-sample examples/graphs/combined.json $W/sample.
 scripts/apply-graph.py personalized examples/graphs/combined.json $W/sample.json <出力 prefix> $W/job.json
 ```
 
+BWA などで解析済みの CRAM から personalized グラフで解析するまでは、
+`scripts/run-cram-personalized.sh` 1 つで投入できます（TUTORIAL の 7.7）。
+
+```bash
+scripts/run-cram-personalized.sh --cram /path/to/SAMPLE.cram --cram-ref /path/to/CRAMの参照.fa \
+  --prefix SAMPLE --workdir $W/SAMPLE --data-root $PGGL_DATA --partition <partition> \
+  --sif $R/sif/deepvariant-opencode-cpu-vg.sif \
+  --variant parabricks --call-sif $R/sif/parabricks-vg.sif --gpu-partition <GPUパーティション> --gpus 2
+```
+
 `--dry-run` をつけると、ジョブを投入せずに `<workdir>/env.sh` と各段階のスクリプトを
 書き出します。`env.sh` の `--bind` に `/usr/local/shared_data` が入っていれば、
 パスと bind は問題ありません。

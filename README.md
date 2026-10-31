@@ -814,6 +814,22 @@ personalized graph and its indexes first, then point `gbz`/`dist`/`min`/
 `zipcodes` at them. The CRAM track keeps working, because the workflow never
 asks how the graph was made.
 
+**From an aligned CRAM in one command.** `scripts/run-cram-personalized.sh`
+chains the whole route as three Slurm jobs and returns at once: decode the CRAM
+into per-read-group FASTQs (with the CRAM's own reference, `--cram-ref`, since
+a graph's reference cannot decode a CRAM written against another FASTA), sample
+and index the personalized graph from those FASTQs, then run
+`scripts/submit-slurm.sh` on the same FASTQs and the new graph. The CRAM is
+decoded once; nothing touches the network.
+
+```bash
+scripts/run-cram-personalized.sh --cram SAMPLE.cram --cram-ref GRCh38_full.fa \
+  --prefix SAMPLE --workdir /shared/work/SAMPLE --data-root /path/to/graphs \
+  --partition cpu --variant parabricks --gpu-partition gpu --gpus 2
+# --variant cpu runs DeepVariant on CPU; --preset picks the graph (default combined);
+# --from sample|submit resumes; --dry-run writes the jobs without submitting
+```
+
 **Once per graph** (reusable for every sample):
 
 ```bash

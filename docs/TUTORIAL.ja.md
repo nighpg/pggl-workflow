@@ -482,6 +482,47 @@ scripts/submit-slurm.sh --job job.json --workdir $W --partition <GPUパーティ
 > Parabricks の経路は、CWL の検証と仮の `pbrun` を使った toy の実行までは確かめて
 > いますが、実際の GPU ではまだ動かしていません。
 
+### 7.7 BWA の CRAM を personalized グラフで解析する（1 コマンド）
+
+BWA-MEM などで解析済みの CRAM を、その試料用の personalized グラフに再マッピングする
+までを、`scripts/run-cram-personalized.sh` が 3 つの Slurm ジョブにまとめて投入します
+（投入したらすぐ戻ります）。
+
+1. **prepare**: CRAM を read group ごとの FASTQ に戻す。CRAM を作ったときの参照
+   （`--cram-ref`）で戻すので、グラフの参照と違う FASTA で作った CRAM でもかまいません
+2. **sample**: その FASTQ から personalized グラフとインデックスを作る（KMC と `vg haplotypes`）
+3. **submit**: 同じ FASTQ と personalized グラフで `scripts/submit-slurm.sh` を投入する
+   （レーンのマッピング、呼び出し、グラフ SV）
+
+CRAM を戻すのは 1 回だけで、ネットワークは使いません。
+
+```bash
+cd /shared/…/pggl-workflow
+scripts/run-cram-personalized.sh \
+  --cram /shared/…/data/SAMPLE.cram \
+  --cram-ref /shared/…/ref/GRCh38/Homo_sapiens_assembly38.fasta \
+  --prefix SAMPLE --workdir /shared/…/runs/SAMPLE \
+  --data-root /shared/…/graphs --partition <CPUパーティション> \
+  --variant parabricks --gpu-partition <GPUパーティション> --gpus 2
+```
+
+- `--cram-ref` には `.fai` と `.dict` が要ります（手順 5 と同じ方法で作れます）。
+- `--variant cpu` にすると、呼び出しも CPU の DeepVariant で行います。
+- グラフは既定で `examples/graphs/combined.json` です。`--preset` で変えられます。
+- 繰り返し配列の BED（`interval_files/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz`）
+  を持ち込んでおいてください。プリセットがこれを `sv_exclude_bed` に使います。
+- 途中で止まったときは、`--from sample`（サンプリングから）か `--from submit`（本解析の
+  投入から）で、作業ディレクトリに残った結果を使ってやり直せます。
+- `--dry-run` をつけると、投入せずにジョブとスクリプトだけを書き出します。
+
+実測（HG002 の chr20 だけの CRAM、35x、combined グラフ、`--variant cpu`、128 コアのノード）:
+prepare 45 秒、sample 1 時間 18 分（personalized グラフのインデックス作成がほとんど）、
+レーン 6 分半、call 32 分。sample はゲノム全体のグラフを索引するので、全ゲノムの試料でも
+同じくらいかかり、メモリは 300 GB 程度使います。
+
+ジョブの ID は `<workdir>/jobs.tsv` に、マッピングと呼び出しのジョブは
+`<workdir>/run/jobs.tsv` に書かれ、結果は `<workdir>/run/out/` にできます。
+
 ### 所要時間の目安（実測）
 
 NA18945 の 10% サブサンプル（約 7,800 万リード、12 read group）、128 コア・503 GB の
