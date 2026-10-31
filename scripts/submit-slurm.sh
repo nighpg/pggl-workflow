@@ -198,7 +198,7 @@ for p in paths:
             continue
         if parts[1] in ("usr", "opt"):
             # the image has its own /usr and /opt: bind a directory three
-            # levels down (/usr/local/shared_data), never the whole tree
+            # levels down (/usr/local/<dir>), never the whole tree
             if len(parts) > 4 and parts[3]:
                 tops.add("/".join(parts[:4]))
         elif parts[1] not in ("etc", "proc", "sys", "dev"):

@@ -89,10 +89,8 @@ A job file is the CWL job order: the inputs above as JSON. The same file drives
 a single-node `cwltool` run and `scripts/submit-slurm.sh`.
 
 - Files are `{"class": "File", "path": "..."}`; a relative path is relative to
-  the job file. Use paths every node can see. The shared data tree is
-  `/usr/local/shared_data`, also mounted as `/lustre9/open/shared_data` on the
-  online cluster; the graph presets use the `/usr/local/shared_data` form, the
-  only one the offline GPU cluster has.
+  the job file. Use paths every node can see: a mount that exists only on the
+  login node is not there inside the jobs.
 - Secondary files are not listed: they are found next to the main file.
   `ref` needs `<name>.fai` and `<name without .fa>.dict`; a `.crai` next to the
   CRAM is used when present.
@@ -235,9 +233,13 @@ A graph is a set of inputs that must belong together: the giraffe indexes, the
 snarls, the reference FASTA and paths, and for haplotype sampling the clip graph
 and its `.hapl`. `examples/graphs/<name>.json` holds one such set per graph
 release, and `scripts/apply-graph.py` writes it into a sample's job file, so
-choosing a graph is choosing a preset:
+choosing a graph is choosing a preset. A preset's paths are relative to where
+the releases are installed (`<data root>/JaSaPaGe_GRCh38/release/...`), given
+with `--data-root` or `$PGGL_DATA`; the repeat BED is found in the checkout's
+`interval_files/` once `scripts/fetch-giab-repeat-bed.sh` has fetched it.
 
 ```bash
+export PGGL_DATA=/path/to/graphs       # holds JaSaPaGe_GRCh38/ and combined_GRCh38/
 # the full graph
 scripts/apply-graph.py germline examples/graphs/JaSaPaGe_GRCh38.json sample.json job.json
 # a personalized graph: sample it, then map to it with the release's reference
@@ -272,10 +274,9 @@ node; sampling a personalized graph from it takes about two hours.
 
 The CWL files use `DockerRequirement` as **hints** (not hard requirements), so
 the same workflow runs either with containers (`cwltool --singularity` / docker) or,
-when the tools are already on `$PATH`, natively with `--no-container`. This matches
-the hackathon CPU box, where the SIF image (`image/deepvariant-opencode-cpu.sif`)
-ships DeepVariant 1.10.0, samtools and bcftools, and `vg` / `cwltool` / `node` are
-on `$PATH` in the image home.
+when the tools are already on `$PATH`, natively with `--no-container`. The SIF
+images built below carry all of them (DeepVariant 1.10.0, samtools, bcftools,
+`vg`, `cwltool`, `node`).
 
 ```bash
 # Validate
@@ -358,7 +359,7 @@ RAM — for the JaSaPaGe index set that is ~52 GB per block, so 2 blocks on a
 A job-order JSON can be used instead of CLI inputs, see **Toy demo** below
 (`tests/toy/jobs/`); omit the `fq1`/`fq2`/`rg` keys when using `cram`.
 
-CPU-only environment prerequisites (this hackathon box already has all of them):
+CPU-only environment prerequisites when running natively (the SIF images have all of them):
 
 - `vg` in `$PATH` (static binary; symlinked from `$HOME/.local/bin` / `$HOME/go/bin`)
 - `cwltool` (`pip install cwltool`) and `node` (for inline JS expressions) in `$PATH`
@@ -435,7 +436,7 @@ job at the copies. `scripts/slurm-jobs.py stage-local` does exactly that:
 LD=/tmp/pggl-index.$SLURM_JOB_ID
 trap 'rm -rf "$LD"' EXIT
 python3 scripts/slurm-jobs.py stage-local job.json "$LD" job.local.json gbz dist min zipcodes
-apptainer exec --bind /lustre9 --bind /tmp deepvariant-opencode-cpu-vg.sif \
+apptainer exec --bind /data --bind /tmp deepvariant-opencode-cpu-vg.sif \
   cwltool --no-container --outdir out/ Workflows/germline-pangenome-cpu.cwl job.local.json
 ```
 
@@ -516,8 +517,8 @@ The number of lanes is only known once stage 1 has read the input, so stage 1
 submits stages 2 and 3 itself when it finishes.
 
 ```bash
-scripts/submit-slurm.sh --job job.json --workdir /lustre/.../run1 \
-  --partition test --variant cpu          # or gpu / pangenome-aware-cpu
+scripts/submit-slurm.sh --job job.json --workdir /shared/.../run1 \
+  --partition <partition> --variant cpu          # or gpu / pangenome-aware-cpu
 ```
 
 - Each lane task gets 32 threads, one giraffe process and 100 GB
@@ -559,8 +560,9 @@ scripts/submit-slurm.sh --job job.json --workdir /lustre/.../run1 \
   single-node run writes to `--outdir`. It must be on storage every node sees.
 - The container binds the top-level directories of the checkout, the work dir
   and every input path (as written and as resolved) automatically; add others
-  with `--bind`. Paths such as `/usr/local/shared_data` that exist only on the
-  login node must be given by their cluster-wide name.
+  with `--bind`. Inputs under `/usr` or `/opt` are bound three levels down
+  (`/usr/local/<dir>`), never the image's own `/usr` or `/opt`. Paths that exist
+  only on the login node must be given by their cluster-wide name.
 - A failed lane task cancels the calling job (`--kill-on-invalid-dep`); fix the
   cause and resubmit. `--dry-run` writes the stage scripts without submitting.
 - The calling job runs cwltool with `--parallel`, so the autosome chunks
@@ -590,7 +592,7 @@ everything else looked fine. A rebuild takes about 5 minutes once
 `scripts/stage-sif-assets.sh` has staged the assets.
 
 ```bash
-cd /path/to/pggl-workflow
+cd pggl-workflow                                    # a checkout of this repository
 ./scripts/stage-sif-assets.sh                       # stage sif-stage/ + image/ build assets
 singularity build deepvariant-opencode-cpu-vg.sif sif-build.def      # on a host
 
@@ -617,23 +619,22 @@ your uid to root in a user namespace, which is all `%post` needs here (the
 `--ignore-fakeroot-command` is required because the injected `faked` helper is
 not usable in that mapping). SingularityCE cannot do this: without a subuid
 entry `singularity build --fakeroot` stops with `could not use fakeroot: no
-valid mapping entry found`, so use apptainer (on the NIG cluster,
-`/opt/pkg/apptainer/1.4.5/bin/apptainer`). Point `APPTAINER_TMPDIR` and
+valid mapping entry found`, so use apptainer. Point `APPTAINER_TMPDIR` and
 `APPTAINER_CACHEDIR` at a disk with a few GB free; the CPU image is ~2 GB.
 
 ```bash
 ./scripts/stage-sif-assets.sh      # downloads vg, node, the DeepVariant base image, wheels, debs
-/opt/pkg/apptainer/1.4.5/bin/apptainer build --fakeroot --ignore-fakeroot-command \
+apptainer build --fakeroot --ignore-fakeroot-command \
     deepvariant-opencode-cpu-vg.sif sif-build.def
 ```
 
 Bind every directory the job refers to when running the image
-(`--bind /lustre9 --bind /home ...`), including the targets of symlinks.
+(`--bind /data --bind /scratch ...`), including the targets of symlinks.
 
 Before building, run `./scripts/stage-sif-assets.sh` once:
 it creates `sif-stage/` (vg, node, cwltool wheels, `biobambam2/`) and `image/`
 (the CPU base SIF for the `localimage` bootstrap + the opencode tarball) by
-copying from the working repo, falling back to the original downloads
+copying from `$PGGL_SRC` or `./offline-bundle`, falling back to the original downloads
 (GitHub releases for vg / nodejs.org / `pip download` / the Ubuntu jammy
 archive for the biobambam2 debs) when that is unavailable. No docker is
 needed anywhere. `bamsormadup` is installed under
@@ -727,6 +728,9 @@ apptainer/singularity (`--no-build`/`--with-base` ship the base images plus
 **Not** in the bundle: the pangenome graph, its giraffe indexes and the linear
 reference (~54 GB) — copy those separately; the index preparation itself runs
 offline from the image (`apptainer exec ... prepare_pangenome_indexes.sh`).
+
+Site notes for the NIG supercomputer (where apptainer is, the shared graph
+releases, the offline GPU cluster) are in `docs/NIG.ja.md`.
 
 ## Toy demo (self-contained)
 
@@ -1336,8 +1340,8 @@ default single-process run):
   data is tiny enough not to care.
 - **Scratch space is the quiet requirement.** A 38x sample decodes to ~285 GB of
   FASTQ, KMC's KFF is another 23 GB, and cwltool stages inputs per job. Cluster
-  nodes can have a small node-local `/tmp` (23 GB on one box this was run on;
-  643 GB on the NIG `test` partition nodes), so point `--tmpdir-prefix` / `--tmp-outdir-prefix`, `TMPDIR` and
+  nodes can have a small node-local `/tmp` (23 GB on one box this was run on,
+  several hundred GB on another), so point `--tmpdir-prefix` / `--tmp-outdir-prefix`, `TMPDIR` and
   `vg autoindex -T` at shared storage rather than letting them default.
 - **Memory is per giraffe process, not per run.** Each one holds the whole index
   set resident — ~52 GB of JaSaPaGe files (`min` 38 GB + `dist` 7.6 GB + `gbz`

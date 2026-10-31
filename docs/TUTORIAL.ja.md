@@ -71,8 +71,8 @@ apptainer をコマンド名 `apptainer` で呼べるようにしておきます
 `could not use fakeroot: no valid mapping entry found` で失敗します。
 
 ```bash
-# 例: NIG スパコン
-export PATH=/opt/pkg/apptainer/1.4.5/bin:$PATH
+# 例: apptainer が PATH にないサイト（NIG スパコンでの場所は docs/NIG.ja.md）
+export PATH=/path/to/apptainer/bin:$PATH
 apptainer --version
 export APPTAINER_TMPDIR=/path/to/big/tmp      # 数 GB 以上の空きがある場所
 export APPTAINER_CACHEDIR=/path/to/big/cache
@@ -127,14 +127,14 @@ cp GRCh38_full_analysis_set_plus_decoy_hla.fa                   refbundle/GRCh38
 転送したファイルを共有ストレージ（全ノードから見える場所）に置きます。
 
 ```bash
-cd /lustre/…/work
+cd /shared/…/work
 # 分割した場合は先に結合: cat pggl-offline-bundle-*.tar.part-* > pggl-offline-bundle-<日付>.tar
 sha256sum -c pggl-offline-bundle-<日付>.tar.sha256
 tar xf pggl-offline-bundle-<日付>.tar                    # -> offline-bundle/
 tar xzf offline-bundle/repo/pggl-workflow-*.tar.gz      # -> pggl-workflow/
 cd pggl-workflow
 
-export PATH=/opt/pkg/apptainer/1.4.5/bin:$PATH          # 手順 1 と同じ理由
+export PATH=/path/to/apptainer/bin:$PATH          # 手順 1 と同じ理由
 ./scripts/setup-offline.sh --bundle ../offline-bundle --verify
 ```
 
@@ -151,7 +151,7 @@ export PATH=/opt/pkg/apptainer/1.4.5/bin:$PATH          # 手順 1 と同じ理�
 参照データもチェックサムを検証しておきます。
 
 ```bash
-cd /lustre/…/refbundle && sha256sum -c SHA256SUMS
+cd /shared/…/refbundle && sha256sum -c SHA256SUMS
 ```
 
 ## 5. エアギャップ側: 参照データを配置する
@@ -159,18 +159,18 @@ cd /lustre/…/refbundle && sha256sum -c SHA256SUMS
 以下では、次のように置いたとして説明します。
 
 ```
-/lustre/…/ref/JaSaPaGe/   JaSaPaGe.gbz  JaSaPaGe.snarls  jasapage.dist
+/shared/…/ref/JaSaPaGe/   JaSaPaGe.gbz  JaSaPaGe.snarls  jasapage.dist
                           jasapage.shortread.withzip.min  jasapage.shortread.zipcodes
-/lustre/…/ref/GRCh38/     GRCh38_full_analysis_set_plus_decoy_hla.fa
+/shared/…/ref/GRCh38/     GRCh38_full_analysis_set_plus_decoy_hla.fa
 ```
 
 `.fai`・`.dict` と、GRCh38 へ surject するための PanSN 名の辞書を作ります。
 ツールはすべてイメージの中にあるので、`apptainer exec` で呼びます。
 
 ```bash
-SIF=/lustre/…/pggl-workflow/deepvariant-opencode-cpu-vg.sif
-REF=/lustre/…/ref/GRCh38/GRCh38_full_analysis_set_plus_decoy_hla.fa
-X="apptainer exec --bind /lustre $SIF"
+SIF=/shared/…/pggl-workflow/deepvariant-opencode-cpu-vg.sif
+REF=/shared/…/ref/GRCh38/GRCh38_full_analysis_set_plus_decoy_hla.fa
+X="apptainer exec --bind /shared $SIF"
 
 $X samtools faidx $REF
 $X samtools dict  $REF -o ${REF%.fa}.dict
@@ -178,16 +178,16 @@ $X samtools dict  $REF -o ${REF%.fa}.dict
 # JaSaPaGe は GRCh38 を断片（chr1[585988] など）として持っているので、
 # ref_paths にはパス名の一覧ではなく PanSN 名の辞書を渡す
 awk 'BEGIN{OFS="\t"} $1 ~ /^chr([0-9]+|X|Y|M)$/ {print "@SQ","SN:GRCh38#0#"$1,"LN:"$2}' $REF.fai \
-  | cat <(printf '@HD\tVN:1.6\tSO:unsorted\n') - > /lustre/…/ref/JaSaPaGe/GRCh38.pansn.dict
-grep -c '^@SQ' /lustre/…/ref/JaSaPaGe/GRCh38.pansn.dict      # 25
+  | cat <(printf '@HD\tVN:1.6\tSO:unsorted\n') - > /shared/…/ref/JaSaPaGe/GRCh38.pansn.dict
+grep -c '^@SQ' /shared/…/ref/JaSaPaGe/GRCh38.pansn.dict      # 25
 ```
 
 **すべてのパスを計算ノードからも見える名前で書いてください。** ログインノードにしか
-ないマウント（NIG の `/usr/local/shared_data` など）はジョブの中から見えません。
+ないマウントはジョブの中から見えません。
 計算ノードからの見え方は次で確かめられます。
 
 ```bash
-srun -p <partition> -c 1 --mem=1G ls -l /lustre/…/ref/JaSaPaGe/ /lustre/…/ref/GRCh38/
+srun -p <partition> -c 1 --mem=1G ls -l /shared/…/ref/JaSaPaGe/ /shared/…/ref/GRCh38/
 ```
 
 ---
@@ -197,10 +197,10 @@ srun -p <partition> -c 1 --mem=1G ls -l /lustre/…/ref/JaSaPaGe/ /lustre/…/re
 本番の前に、数分で終わる toy データで Slurm の 3 段階の連携を確かめます。
 
 ```bash
-cd /lustre/…/pggl-workflow
+cd /shared/…/pggl-workflow
 scripts/submit-slurm.sh \
   --job tests/toy/jobs/toy_cram_job.json \
-  --workdir /lustre/…/runs/toy-slurm \
+  --workdir /shared/…/runs/toy-slurm \
   --partition <partition> \
   --prepare-sbatch "--cpus-per-task=2 --mem=8G" \
   --lane-threads 4 --lane-mem-per-chunk 8 \
@@ -214,7 +214,7 @@ scripts/submit-slurm.sh \
 確認:
 
 ```bash
-W=/lustre/…/runs/toy-slurm
+W=/shared/…/runs/toy-slurm
 cat $W/jobs.tsv                                   # prepare / lane / call のジョブ ID
 sacct -j $(cut -f2 $W/jobs.tsv | paste -sd,) -X -o JobID%16,State,Elapsed,NodeList
 ls $W/out/                                        # 13 ファイル
@@ -230,31 +230,31 @@ ls $W/out/                                        # 13 ファイル
 ### 7.1 job ファイルを書く
 
 例として、1000 Genomes の CRAM を JaSaPaGe にマップし GRCh38 に surject、
-グラフ SV もジェノタイプする設定です（`/lustre/…/runs/NA18945/job.json`）。
+グラフ SV もジェノタイプする設定です（`/shared/…/runs/NA18945/job.json`）。
 
 ```json
 {
-  "cram":      {"class": "File", "path": "/lustre/…/data/NA18945.cram"},
-  "ref":       {"class": "File", "path": "/lustre/…/ref/GRCh38/GRCh38_full_analysis_set_plus_decoy_hla.fa"},
+  "cram":      {"class": "File", "path": "/shared/…/data/NA18945.cram"},
+  "ref":       {"class": "File", "path": "/shared/…/ref/GRCh38/GRCh38_full_analysis_set_plus_decoy_hla.fa"},
 
-  "gbz":       {"class": "File", "path": "/lustre/…/ref/JaSaPaGe/JaSaPaGe.gbz"},
-  "dist":      {"class": "File", "path": "/lustre/…/ref/JaSaPaGe/jasapage.dist"},
-  "min":       {"class": "File", "path": "/lustre/…/ref/JaSaPaGe/jasapage.shortread.withzip.min"},
-  "zipcodes":  {"class": "File", "path": "/lustre/…/ref/JaSaPaGe/jasapage.shortread.zipcodes"},
-  "ref_paths": {"class": "File", "path": "/lustre/…/ref/JaSaPaGe/GRCh38.pansn.dict"},
+  "gbz":       {"class": "File", "path": "/shared/…/ref/JaSaPaGe/JaSaPaGe.gbz"},
+  "dist":      {"class": "File", "path": "/shared/…/ref/JaSaPaGe/jasapage.dist"},
+  "min":       {"class": "File", "path": "/shared/…/ref/JaSaPaGe/jasapage.shortread.withzip.min"},
+  "zipcodes":  {"class": "File", "path": "/shared/…/ref/JaSaPaGe/jasapage.shortread.zipcodes"},
+  "ref_paths": {"class": "File", "path": "/shared/…/ref/JaSaPaGe/GRCh38.pansn.dict"},
   "ref_path_prefix": "GRCh38#0#",
 
-  "autosome_interval": {"class": "File", "path": "/lustre/…/pggl-workflow/interval_files/autosome.bed"},
-  "PAR_interval":      {"class": "File", "path": "/lustre/…/pggl-workflow/interval_files/PAR.bed"},
-  "chrX_interval":     {"class": "File", "path": "/lustre/…/pggl-workflow/interval_files/chrX.bed"},
-  "chrY_interval":     {"class": "File", "path": "/lustre/…/pggl-workflow/interval_files/chrY.bed"},
+  "autosome_interval": {"class": "File", "path": "/shared/…/pggl-workflow/interval_files/autosome.bed"},
+  "PAR_interval":      {"class": "File", "path": "/shared/…/pggl-workflow/interval_files/PAR.bed"},
+  "chrX_interval":     {"class": "File", "path": "/shared/…/pggl-workflow/interval_files/chrX.bed"},
+  "chrY_interval":     {"class": "File", "path": "/shared/…/pggl-workflow/interval_files/chrY.bed"},
   "autosome_chunks_count": 8,
 
   "prefix": "NA18945",
   "threads": 128,
 
   "call_sv": true,
-  "snarls": {"class": "File", "path": "/lustre/…/ref/JaSaPaGe/JaSaPaGe.snarls"}
+  "snarls": {"class": "File", "path": "/shared/…/ref/JaSaPaGe/JaSaPaGe.snarls"}
 }
 ```
 
@@ -280,9 +280,11 @@ T2T-CHM13 座標で出したい場合は、`ref_paths` を CHM13 のパス一覧
 グラフごとの入力（giraffe のインデックス、snarls、参照 FASTA とパス、personalized graph
 用の clip グラフと `.hapl`、SV の除外 BED）は `examples/graphs/<名前>.json` にまとめてあり、
 `scripts/apply-graph.py` で job ファイルに書き込めます。グラフの切り替えは、使うファイルを
-変えるだけです。
+変えるだけです。プリセットのパスは、グラフのリリースを置いた場所（データルート）からの
+相対パスで、`--data-root` か環境変数 `PGGL_DATA` で指定します。
 
 ```bash
+export PGGL_DATA=/shared/…/graphs      # JaSaPaGe_GRCh38/ と combined_GRCh38/ を置いた場所
 scripts/apply-graph.py germline examples/graphs/JaSaPaGe_GRCh38.json sample.json job.json
 # combined（738 ハプロタイプ）は personalized graph で使う（全体グラフへのマップは 10 倍以上遅い）
 scripts/apply-graph.py haplotype-sample examples/graphs/combined.json sample.json hs.json --threads 128
@@ -298,11 +300,11 @@ scripts/apply-graph.py personalized examples/graphs/combined.json sample.json gr
 ### 7.2 投入せずに確認する（dry run）
 
 ```bash
-cd /lustre/…/pggl-workflow
-scripts/submit-slurm.sh --job /lustre/…/runs/NA18945/job.json \
-  --workdir /lustre/…/runs/NA18945/check --partition <partition> --dry-run
-cat /lustre/…/runs/NA18945/check/env.sh | grep -E 'SBATCH|LANE_SET'
-rm -rf /lustre/…/runs/NA18945/check
+cd /shared/…/pggl-workflow
+scripts/submit-slurm.sh --job /shared/…/runs/NA18945/job.json \
+  --workdir /shared/…/runs/NA18945/check --partition <partition> --dry-run
+cat /shared/…/runs/NA18945/check/env.sh | grep -E 'SBATCH|LANE_SET'
+rm -rf /shared/…/runs/NA18945/check
 ```
 
 job ファイルのパスの誤りや必須項目の抜けは、ここで分かります。
@@ -311,8 +313,8 @@ job ファイルのパスの誤りや必須項目の抜けは、ここで分か�
 
 ```bash
 scripts/submit-slurm.sh \
-  --job /lustre/…/runs/NA18945/job.json \
-  --workdir /lustre/…/runs/NA18945/run1 \
+  --job /shared/…/runs/NA18945/job.json \
+  --workdir /shared/…/runs/NA18945/run1 \
   --partition <partition>
 ```
 
@@ -354,14 +356,14 @@ scripts/submit-slurm.sh \
 一時ディレクトリは消され、新しいジョブ ID が `jobs.tsv` に追記されます。
 
 ```bash
-scripts/submit-slurm.sh --job job.json --workdir /lustre/…/runs/NA18945/run1 \
+scripts/submit-slurm.sh --job job.json --workdir /shared/…/runs/NA18945/run1 \
   --partition <partition> --from call
 ```
 
 ### 7.4 進捗を見る
 
 ```bash
-W=/lustre/…/runs/NA18945/run1
+W=/shared/…/runs/NA18945/run1
 sacct -j $(cut -f2 $W/jobs.tsv | paste -sd,) -X -o JobID%16,State,Elapsed,NodeList
 grep -h ' done$' $W/logs/lane-*.out | wc -l          # 終わったレーン数
 grep -ao '\[step [a-zA-Z_]*\] completed [a-z]*' $W/logs/call.*.err   # 段階 3 のステップ
@@ -431,7 +433,7 @@ Slurm を使わず、1 台で全段階を実行することもできます（結
 LD=/tmp/pggl-index.$$
 trap 'rm -rf "$LD"' EXIT
 python3 scripts/slurm-jobs.py stage-local job.json "$LD" job.local.json gbz dist min zipcodes
-apptainer exec --bind /lustre --bind /tmp deepvariant-opencode-cpu-vg.sif \
+apptainer exec --bind /shared --bind /tmp deepvariant-opencode-cpu-vg.sif \
   cwltool --no-container --outdir out/ --tmpdir-prefix $PWD/tmp/ --tmp-outdir-prefix $PWD/tmp-out/ \
   Workflows/germline-pangenome-cpu.cwl job.local.json
 ```
