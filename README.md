@@ -577,6 +577,14 @@ scripts/submit-slurm.sh --job job.json --workdir /shared/.../run1 \
   stage scripts, `logs/`, `lanes/NNNN/` (per-lane jobs and outputs),
   `jobs.tsv` (the Slurm job IDs) and `out/`, which has the same files a
   single-node run writes to `--outdir`. It must be on storage every node sees.
+- Intermediate files are removed as soon as the jobs that read them have
+  succeeded (for a 35x genome): the FASTQs decoded from a CRAM/BAM (~270 GB)
+  when stage 3 starts, the lane BAMs (~78 GB) after duplicate marking, the lane
+  GAMs (~160 GB) after the SV calls, and the cwltool scratch at the end; FASTQs
+  the job itself lists are never touched. `--remove-after-lanes` and
+  `--remove-after-success` add paths of your own, `--keep-intermediates` keeps
+  everything. With the lane files gone `--from call` needs the lanes redone;
+  `--from dv` still works.
 - The container binds the top-level directories of the checkout, the work dir
   and every input path (as written and as resolved) automatically; add others
   with `--bind`. Inputs under `/usr` or `/opt` are bound three levels down

@@ -88,6 +88,18 @@
 #                        options, or after a failed or cancelled calling job)
 #   --from dv            parabricks only: resubmit just the GPU job 3c, reusing
 #                        the BAM job 3a left in DIR/out (and leaving 3b's SVs)
+#   --keep-intermediates keep every intermediate file. By default each one is
+#                        removed once the jobs that read it have succeeded: the
+#                        FASTQs decoded from a CRAM/BAM when stage 3 starts, the
+#                        lane BAMs after duplicate marking, the lane GAMs after
+#                        the SV calls, the cwltool scratch at the end. Without
+#                        the lane files, --from call needs the lanes redone;
+#                        --from dv still works (the BAM is in out/).
+#   --remove-after-lanes PATH   also remove PATH (a file or directory) when
+#                        stage 3 starts, i.e. once every lane is mapped
+#                        (repeatable; e.g. FASTQs made for this run elsewhere)
+#   --remove-after-success PATH also remove PATH once stage 3 has succeeded
+#                        (repeatable; e.g. a personalized graph)
 #   --dry-run            write the stage scripts and jobs, submit nothing
 #
 # The workflow files are taken from this checkout (so the parts always match the
@@ -121,6 +133,9 @@ LANE_MEM_PER_CHUNK=100
 CALL_PARALLEL=1
 FROM=
 DRY_RUN=0
+CLEANUP=1
+REMOVE_AFTER_LANES=()
+REMOVE_AFTER_SUCCESS=()
 
 die() { echo "submit-slurm.sh: $*" >&2; exit 2; }
 
@@ -148,6 +163,9 @@ while [ "$#" -gt 0 ]; do
         --no-call-parallel) CALL_PARALLEL=0; shift ;;
         --from) FROM=$2; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
+        --keep-intermediates) CLEANUP=0; shift ;;
+        --remove-after-lanes) REMOVE_AFTER_LANES+=( "$(readlink -m "$2")" ); shift 2 ;;
+        --remove-after-success) REMOVE_AFTER_SUCCESS+=( "$(readlink -m "$2")" ); shift 2 ;;
         -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
         *) die "unknown option: $1" ;;
     esac
@@ -290,6 +308,26 @@ DRY_RUN=$DRY_RUN
 LOCAL_INDEX="$LOCAL_INDEX"
 INDEX_KEY=$INDEX_KEY
 LANE_SET="$LANE_SET"
+CLEANUP=$CLEANUP
+REMOVE_AFTER_LANES=(${REMOVE_AFTER_LANES[@]+$(printf '%q ' "${REMOVE_AFTER_LANES[@]}")})
+REMOVE_AFTER_SUCCESS=(${REMOVE_AFTER_SUCCESS[@]+$(printf '%q ' "${REMOVE_AFTER_SUCCESS[@]}")})
+# Intermediate files go as soon as nothing reads them any more (--keep-intermediates
+# keeps them). Only files this run made are touched, plus the paths given.
+note_rm() { echo "[\$(date -Is)] removing \$*"; rm -rf "\$@"; }
+cleanup_after_lanes() {
+    [ "\$CLEANUP" = 1 ] || return 0
+    note_rm "\$W/prepare-out" \${REMOVE_AFTER_LANES[@]+"\${REMOVE_AFTER_LANES[@]}"}
+}
+cleanup_lane_files() {   # cleanup_lane_files <suffix>: lanes/*/out/*<suffix>
+    [ "\$CLEANUP" = 1 ] || return 0
+    local f
+    for f in "\$W"/lanes/*/out/*"\$1"; do [ -e "\$f" ] && note_rm "\$f"; done
+    return 0
+}
+cleanup_at_end() {
+    [ "\$CLEANUP" = 1 ] || return 0
+    note_rm "\$W/tmp" "\$W/tmp-out" \${REMOVE_AFTER_SUCCESS[@]+"\${REMOVE_AFTER_SUCCESS[@]}"}
+}
 # run_part <stage-name> <part.cwl> <job.json> <out.json> [cwltool options...]
 run_part() {
     local name=\$1 part=\$2 job=\$3 out=\$4
@@ -354,6 +392,13 @@ CALL_JOB=$(sbatch --parsable $PART_OPT $CALL_SBATCH --job-name="$JOBNAME-call" $
     --output="$W/logs/call.%j.out" --error="$W/logs/call.%j.err" "$W/3-call.sh")
 record call "$CALL_JOB"
 echo "submitted call job $CALL_JOB"
+if [ "$SPLIT" = 1 ] && [ "$CLEANUP" = 1 ]; then
+    # the last of the split jobs to finish clears the scratch and the given paths
+    CLEAN_JOB=$(sbatch --parsable $PART_OPT -c 1 --mem=1G --job-name="$JOBNAME-cleanup" \
+        --dependency="afterok:$CALL_JOB${SV_JOB:+:$SV_JOB}" --kill-on-invalid-dep=yes \
+        --output="$W/logs/cleanup.%j.out" --error="$W/logs/cleanup.%j.err" "$W/3-cleanup.sh")
+    record cleanup "$CLEAN_JOB"
+fi
 EOF
 
 # Stage 2: one lane per array task.
@@ -403,14 +448,22 @@ EOF
 cat > "$W/3-markdup.sh" <<'EOF'
 #!/usr/bin/env bash
 source "__W__/env.sh"
+cleanup_after_lanes
 python3 "$HELPER" call "$W/job.json" "$W/prepare.out.json" "$W/lanes" "$PARTS/call-markdup.cwl" "$W/markdup.job.json"
 run_part markdup "$PARTS/call-markdup.cwl" "$W/markdup.job.json" "$W/out-markdup.json" --outdir "$W/out" $CALL_CWLTOOL_OPTS
+cleanup_lane_files .bam
 EOF
 cat > "$W/3-sv.sh" <<'EOF'
 #!/usr/bin/env bash
 source "__W__/env.sh"
 python3 "$HELPER" call "$W/job.json" "$W/prepare.out.json" "$W/lanes" "$PARTS/call-sv.cwl" "$W/sv.job.json"
 run_part sv "$PARTS/call-sv.cwl" "$W/sv.job.json" "$W/out-sv.json" --outdir "$W/out" $CALL_CWLTOOL_OPTS
+cleanup_lane_files .gam
+EOF
+cat > "$W/3-cleanup.sh" <<'EOF'
+#!/usr/bin/env bash
+source "__W__/env.sh"
+cleanup_at_end
 EOF
 cat > "$W/3-call.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -423,14 +476,18 @@ if [ "$SPLIT" = 1 ]; then
         rm -f "$W/out/$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["prefix"])' "$W/job.json").bam"{,.bai}
     fi
 else
+    cleanup_after_lanes
     python3 "$HELPER" call "$W/job.json" "$W/prepare.out.json" "$W/lanes" "$PARTS/call-$VARIANT.cwl" "$W/call.job.json"
     run_part call "$PARTS/call-$VARIANT.cwl" "$W/call.job.json" "$W/out.json" --outdir "$W/out" $CALL_CWLTOOL_OPTS
+    cleanup_lane_files .bam
+    cleanup_lane_files .gam
+    cleanup_at_end
 fi
 EOF
 # sbatch runs a spooled copy of each script, so they cannot find env.sh
 # relative to themselves; the work dir is written in instead.
-sed -i "s#__W__#$W#" "$W/1-prepare.sh" "$W/2-lane.sh" "$W/3-markdup.sh" "$W/3-sv.sh" "$W/3-call.sh" "$W/submit-call.sh"
-chmod +x "$W/1-prepare.sh" "$W/2-lane.sh" "$W/3-markdup.sh" "$W/3-sv.sh" "$W/3-call.sh" "$W/submit-call.sh"
+sed -i "s#__W__#$W#" "$W/1-prepare.sh" "$W/2-lane.sh" "$W/3-markdup.sh" "$W/3-sv.sh" "$W/3-call.sh" "$W/3-cleanup.sh" "$W/submit-call.sh"
+chmod +x "$W/1-prepare.sh" "$W/2-lane.sh" "$W/3-markdup.sh" "$W/3-sv.sh" "$W/3-call.sh" "$W/3-cleanup.sh" "$W/submit-call.sh"
 
 NAME="pggl-$PREFIX"
 case "$FROM" in
@@ -441,6 +498,11 @@ case "$FROM" in
             || die "--from $FROM: no lanes in $W (run the full pipeline first)"
         for j in "$W"/lanes/*/job.json; do
             [ -s "$(dirname "$j")/out.json" ] || die "--from $FROM: lane $(basename "$(dirname "$j")") has no out.json"
+            if [ "$FROM" = call ] && ! python3 -c 'import json,os,sys
+o = json.load(open(sys.argv[1]))
+sys.exit(any(isinstance(v, dict) and v.get("class") == "File" and not os.path.exists(v["path"]) for v in o.values()))' "$(dirname "$j")/out.json"; then
+                die "--from call: lane $(basename "$(dirname "$j")")'s BAM/GAM were removed after the steps that read them succeeded; rerun the lanes (no --from), or use --from dv"
+            fi
         done
         if [ "$FROM" = dv ]; then
             [ "$SPLIT" = 1 ] || die "--from dv applies to --variant parabricks only"

@@ -46,6 +46,12 @@
 #   --sample-mem G       memory of step 2 in GB (default 0 = the whole node);
 #                        vg autoindex is given 300G
 #   --no-sv              do not call graph SVs
+#   --keep-intermediates keep every intermediate file. By default each goes as
+#                        soon as nothing reads it: the k-mer counts after step 2,
+#                        the decoded FASTQs once every lane is mapped, the lane
+#                        BAMs and GAMs after the calls that read them, and the
+#                        personalized graph once step 3 has succeeded
+#   --keep-graph         keep the personalized graph (~45 GB, ~1.3 h to rebuild)
 #   --apptainer FILE     apptainer/singularity binary
 #   --sbatch "S"         extra sbatch options for every job (e.g. --time, --account)
 #   --from STEP          sample or submit: start there, reusing what an earlier
@@ -61,6 +67,7 @@ DATA_ROOT=${PGGL_DATA:-}
 PRESET=$REPO/examples/graphs/combined.json
 VARIANT=parabricks GPUS=2 THREADS=128 SAMPLE_MEM=0 CALL_SV=true
 SIF=$REPO/deepvariant-opencode-cpu-vg.sif CALL_SIF= APPTAINER= EXTRA= FROM= DRY_RUN=0
+CLEANUP=1 KEEP_GRAPH=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --cram) CRAM=$2; shift 2 ;;
@@ -78,6 +85,8 @@ while [ $# -gt 0 ]; do
         --threads) THREADS=$2; shift 2 ;;
         --sample-mem) SAMPLE_MEM=$2; shift 2 ;;
         --no-sv) CALL_SV=false; shift ;;
+        --keep-intermediates) CLEANUP=0; shift ;;
+        --keep-graph) KEEP_GRAPH=1; shift ;;
         --apptainer) APPTAINER=$2; shift 2 ;;
         --sbatch) EXTRA=$2; shift 2 ;;
         --from) FROM=$2; shift 2 ;;
@@ -196,9 +205,20 @@ for e in gbz dist min zipcodes snarls; do
     [ -s "\$W/pgraph/$PREFIX.personalized.\$e" ] || { echo "missing \$W/pgraph/$PREFIX.personalized.\$e" >&2; exit 1; }
 done
 rm -rf "\$W/tmp/sample" "\$W/tmp-out/sample"
+# the k-mer counts (~25 GB for 35x) are read by the sampling only
+[ "$CLEANUP" = 0 ] || rm -f "\$W/pgraph/$PREFIX.kff"
 EOF
 
 # --- step 3: map to the personalized graph and call ----------------------------
+# step 3 removes the decoded FASTQs once every lane is mapped, and the graph
+# once it has succeeded
+CLEAN_OPT=""
+if [ "$CLEANUP" = 0 ]; then
+    CLEAN_OPT="--keep-intermediates"
+else
+    CLEAN_OPT="--remove-after-lanes \"$W/prep/prepare-out\" --remove-after-success \"$W/prep/tmp\" --remove-after-success \"$W/prep/tmp-out\" --remove-after-success \"$W/tmp\" --remove-after-success \"$W/tmp-out\""
+    [ "$KEEP_GRAPH" = 1 ] || CLEAN_OPT+=" --remove-after-success \"$W/pgraph\""
+fi
 CALL_OPT=""
 if [ "$VARIANT" != cpu ]; then
     CALL_OPT="--call-sbatch \"-p $GPU_PARTITION --exclusive --mem=0 --cpus-per-task=$THREADS --gres=gpu:$GPUS\""
@@ -216,7 +236,7 @@ if "$VARIANT" == "parabricks": j["num_gpus"] = $GPUS
 json.dump(j, open(sys.argv[1], "w"), indent=1)
 PY
 "$REPO/scripts/submit-slurm.sh" --job "\$W/job.json" --workdir "\$W/run" --variant $VARIANT \\
-    --sif "$CALL_SIF" --partition "$PARTITION" $APP_OPT $CALL_OPT
+    --sif "$CALL_SIF" --partition "$PARTITION" $APP_OPT $CALL_OPT $CLEAN_OPT
 EOF
 chmod +x "$W/2-sample.sh" "$W/3-submit.sh"
 

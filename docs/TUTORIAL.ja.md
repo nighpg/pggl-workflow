@@ -365,8 +365,9 @@ scripts/submit-slurm.sh \
 
 段階 3 だけが失敗したとき（共有ストレージの一時的なエラーなど）や、呼び出しの設定を
 変えて呼び直したいときは、同じ `--job` と `--workdir` に `--from call` を付けて投入し直します。
-すべてのレーンの `lanes/*/out.json` がそろっている必要があります。前の `out/` と段階 3 の
-一時ディレクトリは消され、新しいジョブ ID が `jobs.tsv` に追記されます。
+すべてのレーンの `lanes/*/out.json` と、それが指すレーンの BAM・GAM が残っている必要が
+あります（段階 3 が成功したあとは消えているので、その場合はレーンからやり直します）。
+前の `out/` と段階 3 の一時ディレクトリは消され、新しいジョブ ID が `jobs.tsv` に追記されます。
 
 ```bash
 scripts/submit-slurm.sh --job job.json --workdir /shared/…/runs/NA18945/run1 \
@@ -404,8 +405,20 @@ NA18945.sv.vcf.gz, .sv.chrX_female/.sv.chrX_male/.sv.chrY.vcf.gz (+.tbi)   call_
 NA18945.sv*.nonrep.vcf.gz (+.tbi)       sv_exclude_bed を渡したとき（反復配列の外の単純な DEL/INS）
 ```
 
-作業ディレクトリには中間ファイル（`prepare-out/` の FASTQ、`lanes/*/out/` のレーン
-BAM・GAM）が残ります。結果を確認したら削除してかまいません。
+中間ファイルは、読む段階が成功した時点で自動的に消えます（`--keep-intermediates` で残せます）。
+30x 前後の全ゲノムでの大きさと消える時期は次のとおりです。
+
+| 中間ファイル | 大きさ（HG002 35x） | 消える時期 |
+| --- | --- | --- |
+| `prepare-out/` の FASTQ（CRAM/BAM から戻したもの） | 約 270 GB | 段階 3 の開始時（全レーンのマップ後） |
+| `lanes/*/out/*.namecol.bam` | 約 78 GB | 重複マークの成功後 |
+| `lanes/*/out/*.gam` | 約 160 GB | SV（vg pack / vg call）の成功後 |
+| `tmp/`、`tmp-out/` | 小さい | 段階 3 の成功後 |
+
+ピーク時の使用量は 1 試料あたり約 600 GB です。最後に残るのは `out/`（BAM 約 46 GB と
+gVCF・SV VCF 約 1.2 GB）とログ・job ファイルだけです。BAM も要らなければ job に
+`"keep_bam": false` を書きます。中間ファイルが消えたあとは `--from call` は使えません
+（`--from dv` は `out/` の BAM を使うので使えます）。
 
 ### 7.6 Parabricks（GPU）で呼び出す
 
@@ -528,6 +541,9 @@ scripts/run-cram-personalized.sh \
 - 途中で止まったときは、`--from sample`（サンプリングから）か `--from submit`（本解析の
   投入から）で、作業ディレクトリに残った結果を使ってやり直せます。
 - `--dry-run` をつけると、投入せずにジョブとスクリプトだけを書き出します。
+- 中間ファイルは段階ごとに消えます。k-mer の集計（`*.kff`、約 25 GB）は sample の直後、
+  CRAM から戻した FASTQ は全レーンのマップ後、personalized グラフ（約 45 GB）は最後まで
+  成功した後です。`--keep-graph` でグラフだけ、`--keep-intermediates` ですべてを残せます。
 
 実測（HG002 の chr20 だけの CRAM、35x、combined グラフ、`--variant cpu`、128 コアのノード）:
 prepare 45 秒、sample 1 時間 18 分（personalized グラフのインデックス作成がほとんど）、
