@@ -56,6 +56,17 @@ for a in "${pp[@]}"; do
     esac
 done
 
+# pbrun only says "Could not find accessible GPUs"; say what this process sees,
+# so a missing --nv, a device cgroup or a driver problem can be told apart.
+if ! nvidia-smi -L >&2; then
+    {
+        echo "parabricks-deepvariant.sh: nvidia-smi sees no GPU in this container"
+        echo "  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-<unset>} NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES-<unset>}"
+        echo "  devices: $(ls /dev/nvidia* 2>/dev/null | tr '\n' ' ')"
+        echo "  nvidia-smi: $(command -v nvidia-smi || echo 'not found (was apptainer run with --nv?)')"
+    } >&2
+    exit 1
+fi
 echo "pbrun deepvariant ${ARGS[*]}" >&2
 pbrun deepvariant "${ARGS[@]}"
 
