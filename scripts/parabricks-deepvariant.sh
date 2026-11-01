@@ -56,6 +56,16 @@ for a in "${pp[@]}"; do
     esac
 done
 
+# apptainer --nv puts the driver libraries in /.singularity.d/libs and points
+# LD_LIBRARY_PATH there, but cwltool runs its tools with a cleaned environment,
+# so put the directory back rather than rely on the runner passing it through.
+if [ -d /.singularity.d/libs ]; then
+    case ":${LD_LIBRARY_PATH:-}:" in
+        *:/.singularity.d/libs:*) ;;
+        *) export LD_LIBRARY_PATH=/.singularity.d/libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} ;;
+    esac
+fi
+
 # pbrun only says "Could not find accessible GPUs"; say what this process sees,
 # so a missing --nv, a device cgroup or a driver problem can be told apart.
 if ! nvidia-smi -L >&2; then

@@ -229,7 +229,16 @@ for b in "${AUTO_BINDS[@]}" "${BINDS[@]+"${BINDS[@]}"}" /tmp ${LOCAL_INDEX:+"$LO
     BIND_ARGS+=" --bind $b"
 done
 GPU_ARG=""
-case "$VARIANT" in gpu|parabricks) GPU_ARG=" --nv" ;; esac
+CWL_GPU_OPTS=""
+case "$VARIANT" in
+    gpu|parabricks)
+        GPU_ARG=" --nv"
+        # apptainer --nv finds the driver libraries through LD_LIBRARY_PATH,
+        # and cwltool hands its tools a cleaned environment: without these the
+        # tools inside see no GPU ("Could not find accessible GPUs").
+        CWL_GPU_OPTS="--preserve-environment LD_LIBRARY_PATH --preserve-environment CUDA_VISIBLE_DEVICES"
+        ;;
+esac
 
 PART_OPT=""
 [ -n "$PARTITION" ] && PART_OPT="--partition=$PARTITION"
@@ -279,8 +288,11 @@ run_part() {
     local name=\$1 part=\$2 job=\$3 out=\$4
     shift 4
     echo "[\$(date -Is)] \$name on \$(hostname) (\$(nproc) cpus): \$part"
-    "\$APPTAINER" exec --cleanenv$GPU_ARG$BIND_ARGS "\$SIF" \\
-        cwltool --no-container --timestamps \\
+    # --cleanenv would also drop the GPUs Slurm assigned to the job
+    local gpu_env=""
+    [ -n "$GPU_ARG" ] && [ -n "\${CUDA_VISIBLE_DEVICES:-}" ] && gpu_env="--env CUDA_VISIBLE_DEVICES=\$CUDA_VISIBLE_DEVICES"
+    "\$APPTAINER" exec --cleanenv$GPU_ARG \$gpu_env$BIND_ARGS "\$SIF" \\
+        cwltool --no-container --timestamps $CWL_GPU_OPTS \\
             --tmpdir-prefix "\$W/tmp/\$name/" --tmp-outdir-prefix "\$W/tmp-out/\$name/" \\
             "\$@" "\$part" "\$job" > "\$out.partial"
     mv "\$out.partial" "\$out"
