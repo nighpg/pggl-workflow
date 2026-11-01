@@ -4,10 +4,11 @@
 # duplicate marking over all lanes, the five DeepVariant calls, and the graph
 # SV track (vg pack + vg call) when lane GAMs are given.
 #
-# Used as a subworkflow by Workflows/germline-pangenome-parabricks.cwl, and run on its own by
-# scripts/submit-slurm.sh once every lane's parts/lane-align.cwl job is done.
-# The steps are those of the germline workflow verbatim; keep them in sync by
-# editing them here, not there.
+# Used as a subworkflow by Workflows/germline-pangenome-parabricks.cwl. It chains
+# the two halves, parts/call-markdup-sv.cwl (CPU: duplicate marking, graph SVs)
+# and parts/call-dv-parabricks.cwl (GPU: DeepVariant); scripts/submit-slurm.sh
+# runs those halves as separate Slurm jobs so that the GPU node is held only for
+# DeepVariant. Edit the steps there, not here.
 
 class: Workflow
 id: call-parabricks
@@ -18,6 +19,7 @@ requirements:
   InlineJavascriptRequirement: {}
   ScatterFeatureRequirement: {}
   StepInputExpressionRequirement: {}
+  SubworkflowFeatureRequirement: {}
 
 inputs:
   gbz:
@@ -142,226 +144,97 @@ inputs:
     default: 1
 
 steps:
-  pick_pack_gam:
-    run: ../../Tools/pick-gam.cwl
-    in:
-      gam_in: pack_gams
-    out:
-      - gam
-
-  build_pack:
-    run: ../../Tools/vg-pack.cwl
+  markdup_sv:
+    run: call-markdup-sv.cwl
     in:
       gbz: gbz
-      gams: pick_pack_gam/gam
-      prefix: prefix
-      threads: threads
-    out:
-      - pack
-
-  keep_pack_gate:
-    run: ../../Tools/keep-pack.cwl
-    in:
-      pack_in: build_pack/pack
-      keep: keep_pack
-    out:
-      - pack
-
-  call_sv_step:
-    run: ../../Tools/vg-call-sv.cwl
-    in:
-      gbz: gbz
-      pack: build_pack/pack
       ref_paths: ref_paths
-      snarls: snarls
-      prefix: prefix
-      sample: sample_name
-      threads: threads
-      min_length: sv_min_length
+      ref: ref
       ref_path_prefix: ref_path_prefix
       PAR_interval: PAR_interval
       chrX_interval: chrX_interval
       chrY_interval: chrY_interval
-      ref: ref
+      prefix: prefix
+      threads: threads
+      snarls: snarls
+      keep_pack: keep_pack
+      sv_min_length: sv_min_length
+      sample_name: sample_name
+      namecol_bams: namecol_bams
+      gams: gams
+      pack_gams: pack_gams
+      sv_exclude_bed: sv_exclude_bed
+      sv_filter_min_qual: sv_filter_min_qual
+      sv_filter_max_short_allele: sv_filter_max_short_allele
     out:
+      - sv_nonrep_vcf
+      - sv_nonrep_vcf_chrX_female
+      - sv_nonrep_vcf_chrX_male
+      - sv_nonrep_vcf_chrY
+      - bam
+      - gam
       - sv_vcf
       - sv_vcf_chrX_female
       - sv_vcf_chrX_male
       - sv_vcf_chrY
-
-  filter_sv_nonrep:
-    run: ../../Tools/sv-filter-nonrep.cwl
-    in:
-      sv_vcf: call_sv_step/sv_vcf
-      sv_vcf_chrX_female: call_sv_step/sv_vcf_chrX_female
-      sv_vcf_chrX_male: call_sv_step/sv_vcf_chrX_male
-      sv_vcf_chrY: call_sv_step/sv_vcf_chrY
-      exclude_bed: sv_exclude_bed
-      min_qual: sv_filter_min_qual
-      max_short_allele: sv_filter_max_short_allele
-      min_length: sv_min_length
-    out:
-      - nonrep_vcf
-      - nonrep_vcf_chrX_female
-      - nonrep_vcf_chrX_male
-      - nonrep_vcf_chrY
-
-  pick_gam:
-    run: ../../Tools/pick-gam.cwl
-    in:
-      gam_in: gams
-    out:
-      - gam
-
-  to_markdup_bam:
-    run: ../../Tools/bamsormadup-to-markdup-bam.cwl
-    in:
-      namecol_bams:
-        source: namecol_bams
-        valueFrom: '$(self != null && self.length > 0 ? self : null)'
-      prefix: prefix
-      threads: threads
-    out:
-      - bam
+      - pack
       - markdup_metrics
 
   keep_bam_gate:
     run: ../../Tools/keep-bam.cwl
     in:
-      bam_in: to_markdup_bam/bam
+      bam_in: markdup_sv/bam
       keep: keep_bam
     out:
       - bam
 
-  make_autosome_chunks:
-    run: ../../Tools/make-autosome-chunks.cwl
+  deepvariant:
+    run: call-dv-parabricks.cwl
     in:
-      bed: autosome_interval
-      count: autosome_chunks_count
-      user_chunks: autosome_chunks
-    out:
-      - chunks
-
-  autosome_regions:
-    run: ../../Tools/autosome-regions.cwl
-    in:
-      autosome_chunks: make_autosome_chunks/chunks
+      ref: ref
       autosome_interval: autosome_interval
-      base_shards: threads
+      autosome_chunks: autosome_chunks
+      autosome_chunks_count: autosome_chunks_count
+      PAR_interval: PAR_interval
+      chrX_interval: chrX_interval
+      chrY_interval: chrY_interval
       prefix: prefix
-    out:
-      - chunks
-      - prefixes
-      - shards
-
-  deepvariant_autosome:
-    run: ../../Tools/parabricks-deepvariant.cwl
-    in:
-      ref: ref
-      reads: to_markdup_bam/bam
-      interval: autosome_regions/chunks
-      num_shards: autosome_regions/shards
+      threads: threads
       num_gpus: num_gpus
-      prefix: autosome_regions/prefixes
-    scatter: [interval, num_shards, prefix]
-    scatterMethod: dotproduct
+      bam: markdup_sv/bam
     out:
-      - gvcf
-
-  concat_autosome:
-    run: ../../Tools/concat-gvcfs.cwl
-    in:
-      prefix: prefix
-      gvcf: deepvariant_autosome/gvcf
-    out:
-      - out_gvcf
-
-  deepvariant_PAR:
-    run: ../../Tools/parabricks-deepvariant.cwl
-    in:
-      ref: ref
-      reads: to_markdup_bam/bam
-      interval: PAR_interval
-      num_shards: threads
-      num_gpus: num_gpus
-      prefix:
-        source: prefix
-        valueFrom: $(self + ".PAR")
-    out:
-      - gvcf
-
-  deepvariant_chrX_female:
-    run: ../../Tools/parabricks-deepvariant.cwl
-    in:
-      ref: ref
-      reads: to_markdup_bam/bam
-      interval: chrX_interval
-      num_shards: threads
-      num_gpus: num_gpus
-      prefix:
-        source: prefix
-        valueFrom: $(self + ".chrX_female")
-    out:
-      - gvcf
-
-  deepvariant_chrX_male:
-    run: ../../Tools/parabricks-deepvariant.cwl
-    in:
-      ref: ref
-      reads: to_markdup_bam/bam
-      interval: chrX_interval
-      num_shards: threads
-      num_gpus: num_gpus
-      postprocess_extra_args:
-        valueFrom: "--haploid_contigs=chrX"
-      prefix:
-        source: prefix
-        valueFrom: $(self + ".chrX_male")
-    out:
-      - gvcf
-
-  deepvariant_chrY:
-    run: ../../Tools/parabricks-deepvariant.cwl
-    in:
-      ref: ref
-      reads: to_markdup_bam/bam
-      interval: chrY_interval
-      num_shards: threads
-      num_gpus: num_gpus
-      postprocess_extra_args:
-        valueFrom: "--haploid_contigs=chrY"
-      prefix:
-        source: prefix
-        valueFrom: $(self + ".chrY")
-    out:
-      - gvcf
+      - gvcf_autosome
+      - gvcf_PAR
+      - gvcf_chrX_female
+      - gvcf_chrX_male
+      - gvcf_chrY
 
 outputs:
   sv_nonrep_vcf:
     type: File?
     doc: Graph SVs of the autosomes and PAR kept by the sv_exclude_bed filter (simple DEL/INS outside the excluded regions; produced when call_sv is true and sv_exclude_bed is given)
-    outputSource: filter_sv_nonrep/nonrep_vcf
+    outputSource: markdup_sv/sv_nonrep_vcf
     secondaryFiles:
       - .tbi
 
   sv_nonrep_vcf_chrX_female:
     type: File?
     doc: As sv_nonrep_vcf, chrX outside PAR, diploid
-    outputSource: filter_sv_nonrep/nonrep_vcf_chrX_female
+    outputSource: markdup_sv/sv_nonrep_vcf_chrX_female
     secondaryFiles:
       - .tbi
 
   sv_nonrep_vcf_chrX_male:
     type: File?
     doc: As sv_nonrep_vcf, chrX outside PAR, haploid
-    outputSource: filter_sv_nonrep/nonrep_vcf_chrX_male
+    outputSource: markdup_sv/sv_nonrep_vcf_chrX_male
     secondaryFiles:
       - .tbi
 
   sv_nonrep_vcf_chrY:
     type: File?
     doc: As sv_nonrep_vcf, chrY outside PAR, haploid
-    outputSource: filter_sv_nonrep/nonrep_vcf_chrY
+    outputSource: markdup_sv/sv_nonrep_vcf_chrY
     secondaryFiles:
       - .tbi
 
@@ -375,71 +248,71 @@ outputs:
   gam:
     type: File[]?
     doc: Per-lane graph-space alignment in GAM format (kept when emit_gam is true)
-    outputSource: pick_gam/gam
+    outputSource: markdup_sv/gam
 
   sv_vcf:
     type: File?
     doc: Structural variants of the pangenome graph genotyped for this sample over the autosomes and PAR, diploid, in reference coordinates (produced when call_sv is true)
-    outputSource: call_sv_step/sv_vcf
+    outputSource: markdup_sv/sv_vcf
 
   sv_vcf_chrX_female:
     type: File?
     doc: Genotyped graph SVs on chrX outside PAR, diploid. Emitted alongside the male file because the sample's sex is not an input, exactly as the gVCFs are.
-    outputSource: call_sv_step/sv_vcf_chrX_female
+    outputSource: markdup_sv/sv_vcf_chrX_female
 
   sv_vcf_chrX_male:
     type: File?
     doc: Genotyped graph SVs on chrX outside PAR, haploid
-    outputSource: call_sv_step/sv_vcf_chrX_male
+    outputSource: markdup_sv/sv_vcf_chrX_male
 
   sv_vcf_chrY:
     type: File?
     doc: Genotyped graph SVs on chrY outside PAR, haploid
-    outputSource: call_sv_step/sv_vcf_chrY
+    outputSource: markdup_sv/sv_vcf_chrY
 
   pack:
     type: File?
     doc: Sample-wide vg pack read support in graph space (materialised when keep_pack is true). Re-runs of vg call need only this and the graph's snarls.
-    outputSource: keep_pack_gate/pack
+    outputSource: markdup_sv/pack
     secondaryFiles:
       - .tbi
 
   markdup_metrics:
     type: File
     doc: MarkDuplicates statistics (replaces the BQSR table of the linear WGSpipeline)
-    outputSource: to_markdup_bam/markdup_metrics
+    outputSource: markdup_sv/markdup_metrics
 
   gvcf_autosome:
     type: File
     doc: Diploid gVCF for autosome regions (reference coordinates)
-    outputSource: concat_autosome/out_gvcf
+    outputSource: deepvariant/gvcf_autosome
     secondaryFiles:
       - .tbi
 
   gvcf_PAR:
     type: File
     doc: Diploid gVCF for PAR regions (reference coordinates)
-    outputSource: deepvariant_PAR/gvcf
+    outputSource: deepvariant/gvcf_PAR
     secondaryFiles:
       - .tbi
 
   gvcf_chrX_female:
     type: File
     doc: Diploid gVCF for female chrX
-    outputSource: deepvariant_chrX_female/gvcf
+    outputSource: deepvariant/gvcf_chrX_female
     secondaryFiles:
       - .tbi
 
   gvcf_chrX_male:
     type: File
     doc: Haploid gVCF for male chrX
-    outputSource: deepvariant_chrX_male/gvcf
+    outputSource: deepvariant/gvcf_chrX_male
     secondaryFiles:
       - .tbi
 
   gvcf_chrY:
     type: File
     doc: Haploid gVCF for chrY
-    outputSource: deepvariant_chrY/gvcf
+    outputSource: deepvariant/gvcf_chrY
     secondaryFiles:
       - .tbi

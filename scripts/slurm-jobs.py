@@ -31,7 +31,10 @@ Subcommands:
                                                --set overrides an input of the lane
                                                jobs only (threads, align_chunks)
   call       JOB PREPARE_OUT LANES_DIR PART OUT
-                                               stage-3 job from the lane outputs
+                                               stage-3 job from the lane outputs (with
+                                               parabricks, the markdup job 3a)
+  dv         JOB MARKDUP_OUT PART OUT          the GPU job 3b of a split stage 3: the
+                                               job's DeepVariant inputs and 3a's BAM
   stage-local JOB DIR OUT KEY...               copy the files of KEY... (e.g. the
                                                giraffe indexes) into DIR, reusing a
                                                complete copy already there, and write
@@ -193,6 +196,17 @@ def main(argv):
         c["namecol_bams"] = [o["namecol_bam"] for o in outs]
         c["gams"] = [o.get("gam") for o in outs]
         c["pack_gams"] = [o.get("pack_gam") for o in outs]
+        dump(c, out)
+
+    elif cmd == "dv":
+        # The GPU half of a split stage 3: the job's DeepVariant inputs plus the
+        # duplicate-marked BAM the markdup job wrote.
+        job, markdup_out, part, out = args
+        j = load_job(job)
+        if not os.path.exists(markdup_out):
+            sys.exit(f"slurm-jobs.py: no markdup output: {markdup_out}")
+        c = subset(j, part_inputs(part))
+        c["bam"] = load(markdup_out)["bam"]
         dump(c, out)
 
     elif cmd == "stage-local":

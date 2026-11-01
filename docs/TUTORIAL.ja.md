@@ -443,16 +443,27 @@ cd /shared/…/pggl-workflow
 scripts/submit-slurm.sh \
   --job tests/toy/jobs/toy_cram_job.json \
   --workdir /shared/…/runs/toy-parabricks \
-  --partition <GPUパーティション> \
+  --partition <CPUパーティション> \
   --variant parabricks --sif /shared/…/parabricks-vg.sif \
   --prepare-sbatch "--cpus-per-task=2 --mem=8G" \
   --lane-threads 4 --lane-mem-per-chunk 8 \
-  --call-sbatch "--cpus-per-task=8 --mem=32G --gres=gpu:1"
+  --markdup-sbatch "--cpus-per-task=8 --mem=16G" \
+  --call-sbatch "-p <GPUパーティション> --cpus-per-task=8 --mem=32G --gres=gpu:1"
 ```
 
-成功の基準は手順 6 と同じです（3 つとも `COMPLETED`、`out/` に 13 ファイル）。
-マッピングを CPU のパーティションで回したいときは、`--partition` を CPU 用にして、
-`--call-sbatch` に `-p <GPUパーティション>` を加えます。
+成功の基準は、prepare・lane・markdup・call の 4 つが `COMPLETED` になり、`out/` に
+13 ファイルがそろうことです。
+
+`--variant parabricks` では段階 3 が 2 つのジョブに分かれ、GPU ノードを使うのは
+DeepVariant の間だけです。
+
+| ジョブ | 中身 | 場所 |
+| --- | --- | --- |
+| markdup | 重複マーク、グラフ SV | `--partition`（CPU）。sbatch オプションは `--markdup-sbatch` |
+| call | DeepVariant × 5（markdup の BAM を読む） | `--call-sbatch` に GPU のパーティションと `--gres` を書く |
+
+call だけが失敗したときは、`--from dv` で GPU のジョブだけを投入し直せます
+（markdup の BAM と SV はそのまま使います）。
 
 **実データで投入する。** job ファイルに `"num_gpus": <N>` を加え、次のように投入します。
 
@@ -460,10 +471,12 @@ scripts/submit-slurm.sh \
 scripts/submit-slurm.sh \
   --job /shared/…/runs/NA18945/job.json \
   --workdir /shared/…/runs/NA18945/run-pb \
-  --partition <GPUパーティション> \
+  --partition <CPUパーティション> \
   --variant parabricks --sif /shared/…/parabricks-vg.sif \
-  --call-sbatch "--exclusive --mem=0 --gres=gpu:<N>"
+  --call-sbatch "-p <GPUパーティション> --exclusive --mem=0 --gres=gpu:<N>"
 ```
+
+prepare・レーン・markdup は `--partition` の CPU ノードで、call だけが GPU ノードで動きます。
 
 **CPU 版と比べる。** Parabricks は DeepVariant を再実装したもので、結果はほぼ同じですが
 ビット単位では一致しません。本番を切り替える前に、ベンチマーク試料（HG002 など）で
@@ -474,9 +487,9 @@ CPU 版と比べてください。マッピングをやり直す必要はなく�
 ```bash
 W=/shared/…/runs/HG002/run1                      # CPU 版で実行済み
 mv $W/out $W/out-cpu
-scripts/submit-slurm.sh --job job.json --workdir $W --partition <GPUパーティション> \
+scripts/submit-slurm.sh --job job.json --workdir $W --partition <CPUパーティション> \
   --from call --variant parabricks --sif /shared/…/parabricks-vg.sif \
-  --call-sbatch "--exclusive --mem=0 --gres=gpu:<N>"
+  --call-sbatch "-p <GPUパーティション> --exclusive --mem=0 --gres=gpu:<N>"
 ```
 
 > Parabricks の経路は、CWL の検証と仮の `pbrun` を使った toy の実行までは確かめて

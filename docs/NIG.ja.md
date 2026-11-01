@@ -60,8 +60,9 @@ scripts/submit-slurm.sh --job $W/job.json --workdir $W/run \
 
 # Parabricks（GPU）で呼び出す場合は、上に次を加え、$W/job.json に "num_gpus": <N> を書く
 #   --variant parabricks --sif $R/sif/parabricks-vg.sif \
-#   --call-sbatch "--exclusive --mem=0 --cpus-per-task=<threads> --gres=gpu:<N>"
-# GPU を使うのは呼び出しのジョブだけです。
+#   --call-sbatch "-p <GPUパーティション> --exclusive --mem=0 --cpus-per-task=<threads> --gres=gpu:<N>"
+# --partition は CPU のまま。重複マークと SV は CPU ノードの markdup ジョブで動き、
+# GPU ノードを使うのは DeepVariant の call ジョブだけです（失敗したら --from dv）。
 
 # combined グラフ: personalized グラフを作ってから使う
 scripts/apply-graph.py haplotype-sample examples/graphs/combined.json $W/sample.json $W/hs.json --threads 128
