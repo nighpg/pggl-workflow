@@ -54,7 +54,7 @@ outputs from the same job file.
 
 ## Inputs
 
-For the three germline workflows. `Workflows/haplotype-sample.cwl` takes its
+For the four germline workflows (cpu, gpu, parabricks, pangenome-aware). `Workflows/haplotype-sample.cwl` takes its
 own, documented under *Haplotype sampling*.
 
 | Parameter | Type | Description |
@@ -80,6 +80,10 @@ own, documented under *Haplotype sampling*.
 | `snarls` | `File` | Precomputed snarls for the graph (`vg snarls`); optional but strongly recommended for whole-genome graphs. Ignored when `call_sv` is false |
 | `keep_pack` | `boolean` | Materialise the sample-wide `<prefix>.pack` in the output directory (default `false`). It is built whenever `call_sv` is set; keeping it lets `vg call` be re-run without re-mapping |
 | `sv_min_length` | `int` | Minimum graph-site traversal length to be genotyped as an SV (`vg call -c`, default 50) |
+| `sv_exclude_bed` | `File` | Regions left out of the `<prefix>.sv*.nonrep.vcf.gz` outputs, e.g. GIAB `GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz`; unset, no `.nonrep` files are written (see *SVs outside repeats*) |
+| `sv_filter_min_qual` | `float` | Minimum QUAL for the `.nonrep` SV VCFs (default 30) |
+| `sv_filter_max_short_allele` | `int` | For the `.nonrep` SV VCFs, the longest shorter allele (padding base included) of a record still counted as a simple DEL/INS (default 10) |
+| `num_gpus` | `int` | *Parabricks workflow only.* GPUs each `pbrun deepvariant` call uses (`--num-gpus`, default 1); Slurm must grant them (`--gres=gpu:N`) |
 | `ref_name_pangenome` | `string` | *Pangenome-aware workflow only.* PanSN sample name of the reference inside the GBZ (`GRCh38`, `CHM13v2`); must name the assembly the BAM is in |
 | `sample_name_pangenome` | `string` | *Pangenome-aware workflow only.* Name for the haplotype panel taken from the GBZ; must differ from the reads' `SM` (default `pangenome`) |
 
@@ -170,7 +174,7 @@ missing keys and paths early.
 ## Preparing a graph
 
 ```bash
-# Auto-build the =>giraffe index set<= from a GBZ and validate the linear reference
+# Auto-build the giraffe index set from a GBZ and validate the linear reference
 ./scripts/prepare_pangenome_indexes.sh path/to/graph.gbz mygraph GRCh38 Homo_sapiens_assembly38.fasta
 # produces mygraph.ref_paths.txt, mygraph.dist, mygraph.min, mygraph.zipcodes
 # plus mygraph.snarls (only needed for the call_sv / SV genotyping track)
@@ -179,20 +183,20 @@ export SKIP_AUTOINDEX=1   # when the graph already ships .dist/.min/.zipcodes (e
 export SKIP_SNARLS=1      # when SV genotyping (call_sv) is not needed
 ```
 
-The script now auto-detects the reference sample: it keeps only full-length
+The script detects the reference sample: it keeps only full-length
 reference paths (fragment paths like `GRCh38#0#chr1[585988]` are filtered out)
 and, if the requested/default sample has none, falls back to the sample with the
-most complete paths. For `data/JaSaPaGe.gbz` (T2T-CHM13 backbone) it reports
+most complete paths. For a JaSaPaGe graph on the T2T-CHM13 backbone it reports
 `ref_path_prefix=CHM13v2#0#` and 25 reference contigs (22 autosomes + chrX +
 chrY + chrM). The linear reference and the interval BEDs must match that
 backbone:
 
 - Linear reference extracted from the graph itself (guaranteed sequence match):
-  `vg paths -x data/JaSaPaGe.gbz -S CHM13v2 -F` → strip the `CHM13v2#0#`
-  prefix → `data/jasa.chm13.fa` (+ `.fai` / `.dict`).
+  `vg paths -x JaSaPaGe.gbz -S CHM13v2 -F` → strip the `CHM13v2#0#`
+  prefix → `jasa.chm13.fa` (+ `.fai` / `.dict`).
 - `interval_files/` holds GRCh38 BEDs; T2T-CHM13 BEDs live in
   `interval_files/chm13_t2t/` (autosome = full-length chX/chr1-22; chrX/chrY
-  minus PAR). PAR coordinates were derived from `data/jasa.chm13.fa`: the
+  minus PAR). PAR coordinates were derived from `jasa.chm13.fa`: the
   JaSaPaGe chrY reference is PAR-masked with Ns (PAR1 `0-2,458,320`, PAR2
   `62,122,809-62,460,029`), so chrX carries the callable PAR: chrX `0-2,458,320`
   and `153,922,346-154,259,566` (`interval_files/chm13_t2t/PAR.bed`).
@@ -361,8 +365,8 @@ setting a job up). Two toy lanes never hit it; a 12-lane WGS sample hit it
 within three minutes. **Get the parallelism from `align_chunks` instead**: it
 forks inside a single `giraffe` job, so cwltool stays serial and the race
 cannot occur. `align_chunks` × ~(gbz + dist + min + zipcodes) has to fit in
-RAM — for the JaSaPaGe index set that is ~52 GB per block, so 2 blocks on a
-251 GB node, with `ceil(threads/2)` each.
+RAM — for the JaSaPaGe index set that is ~77 GB measured per block (see
+*Parallelisation*), so 2-3 blocks on a 251 GB node.
 
 A job-order JSON can be used instead of CLI inputs, see **Toy demo** below
 (`tests/toy/jobs/`); omit the `fq1`/`fq2`/`rg` keys when using `cram`.
@@ -374,7 +378,7 @@ CPU-only environment prerequisites when running natively (the SIF images have al
 - `run_deepvariant` (`/opt/deepvariant/bin`) and `samtools`/`bcftools`
   (`/opt/conda/envs/bio/bin`) on `$PATH` — already set inside the SIF
 - `bamsormadup` (biobambam2) on `$PATH` for the duplicate-marking step; bundled
-  in both SIFs, or install the `biobambam2` distro package when running natively
+  in every SIF, or install the `biobambam2` distro package when running natively
 
 The container images (used when Docker is available) are:
 `quay.io/vgteam/vg:v1.70.0`,
@@ -416,7 +420,7 @@ the one file to the GPU cluster:
 
 ```bash
 ./scripts/stage-sif-assets.sh
-apptainer build --fakeroot parabricks-vg.sif sif-build-parabricks.def   # ~6 GB
+apptainer build --fakeroot parabricks-vg.sif sif-build-parabricks.def   # ~3.3 GB
 # on the GPU cluster
 scripts/submit-slurm.sh --job job.json --workdir run1 --partition cpu \
   --variant parabricks --sif parabricks-vg.sif \
@@ -537,6 +541,9 @@ inside the SIF, chained with job dependencies.
 3. call     1 job, after all lanes  parts/call-<variant>.cwl  markdup, DeepVariant x5, graph SVs
 ```
 
+With `--variant parabricks` stage 3 is instead a markdup, an sv and a GPU call
+job (see *Parabricks track*).
+
 The germline workflows run exactly these parts in one process (prepare, then
 the lane part scattered over the lanes, then the calling part), and the script
 feeds them from the same job file, so both routes produce the same outputs.
@@ -545,7 +552,10 @@ submits stages 2 and 3 itself when it finishes.
 
 ```bash
 scripts/submit-slurm.sh --job job.json --workdir /shared/.../run1 \
-  --partition <partition> --variant cpu          # or gpu / pangenome-aware-cpu
+  --partition <partition> --variant cpu
+# other variants need their image: --variant gpu --sif deepvariant-opencode-gpu-vg.sif,
+# --variant parabricks --sif parabricks-vg.sif,
+# --variant pangenome-aware-cpu --sif deepvariant-pangenome-aware-cpu-vg.sif
 ```
 
 - Each lane task gets 32 threads, one giraffe process and 100 GB
@@ -572,7 +582,7 @@ scripts/submit-slurm.sh --job job.json --workdir /shared/.../run1 \
   (~80 GB for JaSaPaGe) whatever its threads, so memory, not CPU, is what
   limits how many lanes share a node.
 - Lane tasks map from a node-local copy of the graph and indexes
-  (`--local-index /tmp`, ~55 GB), shared by the lane tasks on a node and
+  (`--local-index /tmp`, ~52 GB for JaSaPaGe), shared by the lane tasks on a node and
   removed by the last one. vg memory-maps its indexes: mapped straight from
   Lustre by several nodes at once, the mappers stalled on lock traffic (93%
   system CPU, lanes going from ~3.5 min to hours). Copying costs one
@@ -607,7 +617,9 @@ scripts/submit-slurm.sh --job job.json --workdir /shared/.../run1 \
   chunk with all of them.
 - `--from call` resubmits only stage 3 over the lanes an earlier run left in
   the work dir (every `lanes/*/out.json` must exist), e.g. after a calling job
-  failed on a transient storage error or to call again with other options. It
+  failed on a transient storage error, or to call again with other options as
+  long as the lane BAMs/GAMs are still there (they are removed once stage 3
+  succeeds unless the run used `--keep-intermediates`). It
   clears `out/` and the stage-3 temporary directories first and appends the new
   job to `jobs.tsv`.
 
@@ -621,9 +633,8 @@ Reference data (the ~54 GB JaSaPaGe graph + indexes + linear ref) is **not**
 bundled; bind-mount it or pass host paths at runtime.
 
 The image carries the tools, so **a def file gaining one means the image has to
-be rebuilt** — `kmc` arrived after the first images were built here, and until
-they were rebuilt `Workflows/haplotype-sample.cwl` could not run at all while
-everything else looked fine. A rebuild takes about 5 minutes once
+be rebuilt**: an image built without `kmc`, for instance, runs everything except
+`Workflows/haplotype-sample.cwl`. A rebuild takes about 5 minutes once
 `scripts/stage-sif-assets.sh` has staged the assets.
 
 ```bash
@@ -634,11 +645,13 @@ singularity build deepvariant-opencode-cpu-vg.sif sif-build.def      # on a host
 # on any other host, zero setup:
 singularity exec deepvariant-opencode-cpu-vg.sif \
   /opt/pangenome/run-pangenome.sh \
-  --cram $PWD/sample.cram --ref $PWD/jasa.chm13.fa \
-  --autosome_interval /opt/pangenome/interval_files/chm13_t2t/autosome.bed \
-  --PAR_interval      /opt/pangenome/interval_files/chm13_t2t/PAR.bed \
-  --chrX_interval     /opt/pangenome/interval_files/chm13_t2t/chrX.bed \
-  --chrY_interval     /opt/pangenome/interval_files/chm13_t2t/chrY.bed \
+  --cram $PWD/sample.cram --ref $PWD/graph.ref.fa --ref_path_prefix 'GRCh38#0#' \
+  --gbz $PWD/graph.gbz --dist $PWD/graph.dist --min $PWD/graph.min \
+  --zipcodes $PWD/graph.zipcodes --ref_paths $PWD/graph.ref.pansn.dict \
+  --autosome_interval /opt/pangenome/interval_files/autosome.bed \
+  --PAR_interval      /opt/pangenome/interval_files/PAR.bed \
+  --chrX_interval     /opt/pangenome/interval_files/chrX.bed \
+  --chrY_interval     /opt/pangenome/interval_files/chrY.bed \
   --prefix SAMPLE --outdir out/
 ```
 
@@ -680,7 +693,7 @@ venv and no PEP 668 marker, so cwltool is installed system-wide from the wheels
 staged in `sif-stage/` (offline). The final image's `%environment` already sets
 `PATH` and the image's `/opt/deepvariant/bin/run_deepvariant` needs
 `TF_USE_LEGACY_KERAS=1`. `tools/filter_fastq.py` is bundled at
-`/opt/pangenome/tools/` in both images.
+`/opt/pangenome/tools/` in every image.
 
 ### GPU SIF
 
@@ -726,7 +739,8 @@ not an option on the CPU one, because
 `run_deepvariant` at all — the two callers cannot live in one `--no-container`
 run. Everything else (vg, samtools/bcftools, biobambam2, kmc, node, cwltool,
 the workflow tree) is staged exactly as for the CPU image, so
-`./scripts/stage-sif-assets.sh` covers all three.
+`./scripts/stage-sif-assets.sh` covers all four images (the Parabricks one also
+takes samtools/bcftools from `deepvariant-opencode-cpu-vg.sif`, so build that first).
 
 ```bash
 apptainer build [--fakeroot --ignore-fakeroot-command] \
@@ -815,7 +829,7 @@ cwltool --no-container --outdir tests/toy/demo_out/pangenome_aware \
   tests/toy/jobs/toy_pangenome_aware_job.json
 ```
 
-`jobs/toy_job.json` also shows the new
+`jobs/toy_job.json` also shows the
 `autosome_chunks_count` input (the toy autosome has a single contig, so any
 count there just yields one chunk).
 
@@ -1165,7 +1179,7 @@ Notes and limits:
   concatenated copy doubles that at the moment of packing. Both are removed
   once the pack exists (the lane GAMs are kept only if `emit_gam` asked for
   them).
-- **Memory.** Nothing is packed alongside `vg giraffe` any more, so an
+- **Memory.** `vg pack` runs on its own, not alongside `vg giraffe`, so an
   alignment block peaks at giraffe alone (~70 GB on JaSaPaGe) and
   `align_chunks` multiplies that; the single packing pass peaks at about the
   same figure on its own. `vg call` is likewise run as one process threaded
@@ -1306,7 +1320,7 @@ a 64-thread CPU box):
 - `autosome_chunks_count` (int, default `0`): **the easy way to chunk the
   autosome.** The workflow derives the chunk BEDs itself from `autosome_interval`
   (no per-chunk files to prepare or list). `0` (or omitting it) keeps a single
-  chunk over the whole autosome (the previous behaviour); `N>=2` groups
+  chunk over the whole autosome; `N>=2` groups
   contiguous contigs into ~`N` bp-balanced chunks, and an `N` at or above the
   number of contigs gives one chunk per contig. A contig is never split across
   chunks. Each chunk still gets `floor(base_shards / #chunks)` (at least 1) DeepVariant shards
@@ -1321,8 +1335,7 @@ a 64-thread CPU box):
   coordinates: `chunk[i+1].start == chunk[i].end`, otherwise the boundary base
   is left uncalled (the automatic contig split above is always gap-free).
 
-  A helper that writes one BED per contig is still available if you want files
-  on disk, but it is no longer needed for normal runs:
+  To have the per-contig BEDs on disk instead, a helper writes them:
 
   ```bash
   scripts/split-autosome-bed.sh autosome.bed autosome_chunks/   # -> list on stdout
@@ -1369,7 +1382,7 @@ default single-process run):
   internal shard partitioning of each region, so chunked runs may merge or split
   `<*>` blocks differently. Variant records and genotypes are unaffected.
 
-## Release notes
+## Notes and known issues
 
 - The toy job files use **paths relative to their own directory**
   (`tests/toy/jobs/`): run cwltool from anywhere in the checkout, e.g.
@@ -1391,8 +1404,7 @@ default single-process run):
   data is tiny enough not to care.
 - **Scratch space is the quiet requirement.** A 38x sample decodes to ~285 GB of
   FASTQ, KMC's KFF is another 23 GB, and cwltool stages inputs per job. Cluster
-  nodes can have a small node-local `/tmp` (23 GB on one box this was run on,
-  several hundred GB on another), so point `--tmpdir-prefix` / `--tmp-outdir-prefix`, `TMPDIR` and
+  nodes can have a small node-local `/tmp` (from tens to hundreds of GB), so point `--tmpdir-prefix` / `--tmp-outdir-prefix`, `TMPDIR` and
   `vg autoindex -T` at shared storage rather than letting them default.
 - **Memory is per giraffe process, not per run.** Each one holds the whole index
   set resident — ~52 GB of JaSaPaGe files (`min` 38 GB + `dist` 7.6 GB + `gbz`
@@ -1420,7 +1432,7 @@ default single-process run):
   `<prefix>_unassigned` lane. The split pieces are transient BAMs (level 1),
   deleted as each lane's FASTQ is written, but at their peak they take roughly
   one lightly compressed copy of the input on top of the FASTQs. A CRAM/BAM with
-  a single `@RG` (or none) is streamed straight to one lane as before.
+  a single `@RG` (or none) is streamed straight to one lane.
 
 ## License
 

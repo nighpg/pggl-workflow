@@ -4,8 +4,7 @@
 # so no per-chunk BED files have to be prepared or listed in the job.
 #
 # <count> controls the split:
-#   0 or 1 : a single chunk covering the whole interval (the historical
-#            no-chunks default)
+#   0 or 1 : a single chunk covering the whole interval (the default)
 #   N >= 2 : contiguous contigs are grouped into at most N chunks whose sizes
 #            (in bp) are as balanced as possible (a contig is never split);
 #            if N >= the number of contigs, one chunk per contig.

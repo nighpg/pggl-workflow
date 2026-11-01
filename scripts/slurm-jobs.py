@@ -8,6 +8,10 @@ one CWL part each, instead of one cwltool process on one node:
   lane      Workflows/parts/lane-align.cwl      one lane each  (1 array task per lane)
   call      Workflows/parts/call-<variant>.cwl  markdup, DeepVariant, SV (1 job)
 
+With --variant parabricks the call stage is three jobs instead:
+parts/call-markdup.cwl and parts/call-sv.cwl (CPU) and
+parts/call-dv-parabricks.cwl (GPU, on the markdup BAM).
+
 Every stage takes the same job file the single-node workflow would, so this
 script only has to keep the keys a part declares as inputs, turn relative paths
 into absolute ones (the per-stage jobs live elsewhere), and wire the outputs of

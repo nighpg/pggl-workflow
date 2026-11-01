@@ -12,7 +12,7 @@ README と `docs/TUTORIAL.ja.md`、`docs/OFFLINE.md` にあります。
 | 共有データ | `/usr/local/shared_data`。オンライン側では `/lustre9/open/shared_data` としても見えますが、オフラインの GPU クラスタには `/usr/local/shared_data` しかないので、パスはこの形で書きます |
 | パーティション | オンライン側の計算ノードは `test`（`/tmp` はノードあたり約 643 GB） |
 
-`/usr/local/shared_data` は計算ノードからも見えます（2026-10-28 に a038、at155、at163 で確認）。
+`/usr/local/shared_data` は計算ノードからも見えます。
 `submit-slurm.sh` はこの下の入力に対して `/usr/local/shared_data` をコンテナに bind します。
 
 ## 共有データの配置
@@ -81,8 +81,8 @@ scripts/run-cram-personalized.sh --cram /path/to/SAMPLE.cram --cram-ref /path/to
   --variant parabricks --call-sif $R/sif/parabricks-vg.sif --gpu-partition <GPUパーティション> --gpus 2
 ```
 
-`--dry-run` をつけると、ジョブを投入せずに `<workdir>/env.sh` と各段階のスクリプトを
-書き出します。`env.sh` の `--bind` に `/usr/local/shared_data` が入っていれば、
+`--dry-run` をつけると、ジョブを投入せずに `<workdir>/env.sh`（`run-cram-personalized.sh`
+では `<workdir>/prep/env.sh`）と各段階のスクリプトを書き出します。`env.sh` の `--bind` に `/usr/local/shared_data` が入っていれば、
 パスと bind は問題ありません。
 
 ## オフラインの GPU クラスタ

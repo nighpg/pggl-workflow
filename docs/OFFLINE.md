@@ -10,9 +10,9 @@ access. The two scripts below split exactly along that line:
 | `scripts/fetch-offline-bundle.sh` | **online** host | downloads/builds everything into one `offline-bundle/` directory (optionally a single `.tar`) |
 | `scripts/setup-offline.sh` | **offline** host | verifies the bundle, installs (or builds) the apptainer image, smoke-tests it |
 
-Everything else (`scripts/stage-sif-assets.sh`, the `.def` files) works unchanged;
-`stage-sif-assets.sh` just learned to read its inputs from a bundle and to refuse
-to touch the network when `PGGL_OFFLINE=1`.
+Everything else (`scripts/stage-sif-assets.sh`, the `.def` files) works as on an
+online host: `stage-sif-assets.sh` reads its inputs from a bundle and refuses to
+touch the network when `PGGL_OFFLINE=1`.
 
 ## Shared storage instead of a bundle
 
@@ -46,7 +46,7 @@ This produces `offline-bundle/` and `pggl-offline-bundle-<date>.tar` (+ `.sha256
 
 ```
 offline-bundle/
-├── sif/          deepvariant-opencode-cpu-vg.sif      <- ready to run, ~6 GB
+├── sif/          deepvariant-opencode-cpu-vg.sif      <- ready to run, ~2 GB
 │                 deepvariant-opencode-gpu-vg.sif      (only with --gpu)
 ├── image/        base images (only with --with-base / --no-build)
 ├── sif-stage/    vg, node, cwltool wheels, bamsormadup + its libs, kmc
@@ -179,10 +179,9 @@ all-in-one image with `--no-container` is the supported one.
 
 - **`docker/run-toy-demo.sh` is online-only.** It builds `docker/Dockerfile.toy`,
   which downloads vg/cwltool at build time. Use the apptainer image offline.
-- **No `opencode` needed.** The GPU image used to require
-  `image/opencode-linux-x64-baseline.tar.gz`, a file with no public URL. It is
-  now optional: when `image/opencode/` is empty the GPU image is built without
-  that (pipeline-irrelevant) developer tool.
+- **No `opencode` needed.** `image/opencode-linux-x64-baseline.tar.gz` is
+  optional: when `image/opencode/` is empty the GPU image is built without that
+  (pipeline-irrelevant) developer tool.
 - **`PGGL_OFFLINE=1`** makes `scripts/stage-sif-assets.sh` fail fast with an
   explanatory message instead of blocking on a download; `PGGL_SRC=<dir>` points
   it at an unpacked bundle (it also picks up `./offline-bundle` automatically).

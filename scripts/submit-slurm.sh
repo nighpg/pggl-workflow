@@ -39,10 +39,11 @@
 #   --apptainer FILE     apptainer/singularity binary (default: first on PATH,
 #                        else the newest /opt/pkg/apptainer/*/bin/apptainer)
 #   --partition P        Slurm partition for every stage
+#   --sbatch S           sbatch options added to every job (e.g. --time, --account)
 #   --bind DIR           extra bind path for the container (repeatable); the
 #                        top-level directories of the repo, the work dir and
 #                        every input path are bound automatically
-#   --prepare-sbatch S   extra sbatch options for stage 1
+#   --prepare-sbatch S   sbatch options for stage 1, replacing the default
 #                        (default: "--cpus-per-task=32 --mem=64G")
 #   --lane-threads N     threads of each lane task (default 32), for stage 2
 #                        only: DeepVariant in stage 3 keeps the job's `threads`.
@@ -62,7 +63,7 @@
 #   at 32 threads, 64% at 128, none gained beyond). Four 32-thread lanes on a
 #   128-core node overlap their loading and did a lane every ~47 s; one lane
 #   with the whole node took ~110-123 s however it was split.
-#   --call-sbatch S      extra sbatch options for stage 3 (with parabricks, the
+#   --call-sbatch S      sbatch options for stage 3, replacing the default (with parabricks, the
 #                        GPU job 3c: put its partition and --gres here)
 #                        (default: "--exclusive --mem=0 --cpus-per-task=<threads>")
 #   --markdup-sbatch S   sbatch options for job 3a (parabricks only); it runs in
@@ -148,6 +149,7 @@ while [ "$#" -gt 0 ]; do
         --sif) SIF=$2; shift 2 ;;
         --apptainer) APPTAINER=$2; shift 2 ;;
         --partition) PARTITION=$2; shift 2 ;;
+        --sbatch) SBATCH_EXTRA=$2; shift 2 ;;
         --bind) BINDS+=( "$2" ); shift 2 ;;
         --prepare-sbatch) PREPARE_SBATCH=$2; shift 2 ;;
         --lane-sbatch) LANE_SBATCH=$2; shift 2 ;;
@@ -267,6 +269,8 @@ esac
 
 PART_OPT=""
 [ -n "$PARTITION" ] && PART_OPT="--partition=$PARTITION"
+# every sbatch call carries PART_OPT, so the options for all jobs ride along
+[ -n "${SBATCH_EXTRA:-}" ] && PART_OPT="$PART_OPT $SBATCH_EXTRA"
 ARRAY_LIMIT=""
 [ -n "$MAX_LANES" ] && ARRAY_LIMIT="%$MAX_LANES"
 

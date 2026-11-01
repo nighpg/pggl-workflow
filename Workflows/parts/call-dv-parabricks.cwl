@@ -18,7 +18,7 @@ requirements:
 inputs:
   ref:
     type: File
-    doc: Linear reference FASTA used to decode the CRAM and for variant calling; contig sequences must match the graph reference paths (or the CRAM @SQ)
+    doc: Linear reference FASTA for variant calling; contig sequences must match the BAM @SQ
     secondaryFiles:
       - ^.dict
       - .fai
@@ -51,7 +51,7 @@ inputs:
 
   threads:
     type: int
-    doc: CPU threads for vg giraffe, samtools and the DeepVariant shards. How many GPUs the run uses is not set here -- it is whatever CUDA is allowed to see (apptainer --nv, NVIDIA_VISIBLE_DEVICES, Slurm --gres).
+    doc: CPU cores reserved for each pbrun call (the step resource request); the GPUs it uses are num_gpus.
     default: 32
 
   num_gpus:

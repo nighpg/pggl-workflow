@@ -14,7 +14,7 @@ inputs:
       - type: array
         items: File
       - "null"
-    doc: Optional list of BED files partitioning the autosome (e.g. one per chromosome). Non-HS37 DNA sites (e.g. decoy contigs) that are not in any chunk are dropped. When empty or null, the whole autosome_interval is used as a single chunk.
+    doc: Optional list of BED files partitioning the autosome (e.g. one per chromosome). Sites outside every chunk (e.g. on decoy contigs) are not called. When empty or null, the whole autosome_interval is used as a single chunk.
     default: []
 
   autosome_interval:

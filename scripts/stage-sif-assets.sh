@@ -1,6 +1,7 @@
 #!/bin/bash
-# Stage the build inputs shared by sif-build.def, sif-build-gpu.def and
-# sif-build-pangenome-aware.def:
+# Stage the build inputs shared by sif-build.def, sif-build-gpu.def,
+# sif-build-pangenome-aware.def and sif-build-parabricks.def (which also takes
+# samtools/bcftools from deepvariant-opencode-cpu-vg.sif):
 #   sif-stage/  -> vg v1.70.0 static binary, node v20.18.0, cwltool wheels,
 #                  biobambam2/bamsormadup (+ libmaus2/libgpgme/libnettle) and
 #                  kmc (for Workflows/haplotype-sample.cwl)

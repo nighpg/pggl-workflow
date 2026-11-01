@@ -8,8 +8,9 @@
 #
 # Writes <outdir>/<contig>.bed for each contig and prints the list of produced
 # BED files (one per line, in genomic order) to stdout; use that list as the
-# workflow `autosome_chunks` input, e.g. with cwltool --autosome-chunks:
-#   --autosome-chunks $(< <outdir>/.chunk_order)
+# workflow `autosome_chunks` input, given once per file on a cwltool command
+# line (--autosome_chunks a.bed --autosome_chunks b.bed ...) or as a File array
+# in the job file.
 set -euo pipefail
 
 BED=$1

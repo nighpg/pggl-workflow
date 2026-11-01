@@ -89,12 +89,12 @@ inputs:
       - type: array
         items: File
       - "null"
-    doc: Optional explicit list of BED files partitioning the autosome. Leave unset to derive the chunks automatically (see autosome_chunks_count); when set, these are used verbatim, in this order.
+    doc: Optional explicit list of BED files partitioning the autosome. Leave unset to derive the chunks automatically (see autosome_chunks_count); when set, these are used verbatim, in this order. Ignored by this workflow (see autosome_chunks_count).
     default: []
 
   autosome_chunks_count:
     type: int?
-    doc: Convenience knob for automatic autosome chunking. Omit or 0 = a single chunk over the whole autosome (the previous default); N>=2 groups contiguous contigs into ~N bp-balanced chunks (a contig is never split); if N >= the number of contigs, one chunk per contig. Ignored when autosome_chunks is set. DeepVariant still shards each chunk internally via base_shards. Non-HS37 DNA sites that fall in no chunk are dropped.
+    doc: Convenience knob for automatic autosome chunking. Omit or 0 = a single chunk over the whole autosome; N>=2 groups contiguous contigs into ~N bp-balanced chunks (a contig is never split); if N >= the number of contigs, one chunk per contig. Ignored when autosome_chunks is set. DeepVariant still shards each chunk internally via base_shards. Ignored by this workflow, as Parabricks calls the whole autosome at once and splits it across the GPUs itself. Sites outside every chunk are not called.
     default: 0
 
   PAR_interval:

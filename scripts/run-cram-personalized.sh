@@ -53,7 +53,8 @@
 #                        personalized graph once step 3 has succeeded
 #   --keep-graph         keep the personalized graph (~45 GB, ~1.3 h to rebuild)
 #   --apptainer FILE     apptainer/singularity binary
-#   --sbatch "S"         extra sbatch options for every job (e.g. --time, --account)
+#   --sbatch "S"         extra sbatch options for every job, the mapping and calling
+#                        jobs of step 3 included (e.g. --time, --account)
 #   --from STEP          sample or submit: start there, reusing what an earlier
 #                        run left in DIR
 #   --dry-run            write the jobs and scripts, submit nothing
@@ -128,6 +129,7 @@ APP_OPT="--apptainer $APPTAINER"
 if [ -z "$FROM" ]; then
     [ -s "$CRAM" ] || die "$CRAM not found"
     [ -s "$CRAM_REF.fai" ] || die "$CRAM_REF.fai not found (samtools faidx)"
+    [ -s "${CRAM_REF%.*}.dict" ] || die "${CRAM_REF%.*}.dict not found (samtools dict)"
     python3 - "$REPO/examples/jobs/sample.cram.json" "$W/sample.cram.json" "$(readlink -f "$CRAM")" \
         "$PREFIX" "$THREADS" "$CALL_SV" <<'PY'
 import json, sys
@@ -219,6 +221,8 @@ else
     CLEAN_OPT="--remove-after-lanes \"$W/prep/prepare-out\" --remove-after-success \"$W/prep/tmp\" --remove-after-success \"$W/prep/tmp-out\" --remove-after-success \"$W/tmp\" --remove-after-success \"$W/tmp-out\""
     [ "$KEEP_GRAPH" = 1 ] || CLEAN_OPT+=" --remove-after-success \"$W/pgraph\""
 fi
+SBATCH_OPT=""
+[ -n "$EXTRA" ] && SBATCH_OPT="--sbatch \"$EXTRA\""
 CALL_OPT=""
 if [ "$VARIANT" != cpu ]; then
     CALL_OPT="--call-sbatch \"-p $GPU_PARTITION --exclusive --mem=0 --cpus-per-task=$THREADS --gres=gpu:$GPUS\""
@@ -236,7 +240,7 @@ if "$VARIANT" == "parabricks": j["num_gpus"] = $GPUS
 json.dump(j, open(sys.argv[1], "w"), indent=1)
 PY
 "$REPO/scripts/submit-slurm.sh" --job "\$W/job.json" --workdir "\$W/run" --variant $VARIANT \\
-    --sif "$CALL_SIF" --partition "$PARTITION" $APP_OPT $CALL_OPT $CLEAN_OPT
+    --sif "$CALL_SIF" --partition "$PARTITION" $APP_OPT $SBATCH_OPT $CALL_OPT $CLEAN_OPT
 EOF
 chmod +x "$W/2-sample.sh" "$W/3-submit.sh"
 

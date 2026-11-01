@@ -8,7 +8,7 @@
 #
 # The output keeps the input read order (name-collated), which is exactly what
 # bamsormadup expects for SO=coordinate; no name-sort / fixmate / sort is done
-# here anymore. BAM compression is forced to level=6 because addreplacerg
+# here. BAM compression is forced to level=6 because addreplacerg
 # otherwise writes uncompressed BAM in this build.
 #
 # Usage: samtools-prep-lane.sh <in.bam> <lane> <threads> <rg> <ref_path_prefix>

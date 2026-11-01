@@ -46,12 +46,12 @@ apptainer イメージとその材料を集める手順 1〜3 だけです。
 | ファイル | サイズ（JaSaPaGe） | 備考 |
 | --- | --- | --- |
 | `JaSaPaGe.gbz` | 3.3 GB | グラフ |
-| `jasapage.dist` / `jasapage.shortread.withzip.min` / `jasapage.shortread.zipcodes` | 7.6 / 37 / 2.5 GB | giraffe インデックス |
+| `jasapage.dist` / `jasapage.shortread.withzip.min` / `jasapage.shortread.zipcodes` | 7.6 / 38 / 2.6 GB | giraffe インデックス |
 | `JaSaPaGe.snarls` | 177 MB | SV ジェノタイピング（`call_sv`）を使う場合 |
 | 線形参照 FASTA（例: `GRCh38_full_analysis_set_plus_decoy_hla.fa`） | 3.1 GB | 入力 CRAM を作ったときの参照と同じもの |
 
 > **インデックスはオンライン側（または計算資源のある環境）で作っておくのがおすすめです。**
-> `vg autoindex` は JaSaPaGe で 32 コア・240 GB・数時間〜1 日かかります。
+> `vg autoindex` は JaSaPaGe で 32 コアを使い、約 4 時間 20 分・メモリ約 90 GB でした（README の *Haplotype sampling* の表）。
 
 ---
 
@@ -464,7 +464,7 @@ scripts/submit-slurm.sh \
   --call-sbatch "-p <GPUパーティション> --cpus-per-task=8 --mem=32G --gres=gpu:1"
 ```
 
-成功の基準は、prepare・lane・markdup・sv・call の 5 つが `COMPLETED` になり、`out/` に
+成功の基準は、prepare・lane・markdup・sv・call・cleanup の 6 つが `COMPLETED` になり、`out/` に
 13 ファイルがそろうことです。
 
 `--variant parabricks` では段階 3 が 3 つのジョブに分かれ、GPU ノードを使うのは
@@ -499,12 +499,13 @@ prepare・レーン・markdup・sv は `--partition` の CPU ノードで、call
 
 **CPU 版と比べる。** Parabricks は DeepVariant を再実装したもので、結果はほぼ同じですが
 ビット単位では一致しません。本番を切り替える前に、ベンチマーク試料（HG002 など）で
-CPU 版と比べてください。マッピングをやり直す必要はなく、CPU 版の作業ディレクトリの
-レーンの結果を `--from call` で再利用できます。`--from call` は前の `out/` を消すので、
-先に退避します。
+CPU 版と比べてください。マッピングをやり直さずに済むよう、CPU 版は
+`--keep-intermediates` を付けて実行しておきます（付けないと、成功した時点でレーンの
+BAM・GAM が消え、`--from call` が使えません）。その作業ディレクトリのレーンの結果を
+`--from call` で再利用します。`--from call` は前の `out/` を消すので、先に退避します。
 
 ```bash
-W=/shared/…/runs/HG002/run1                      # CPU 版で実行済み
+W=/shared/…/runs/HG002/run1                      # CPU 版を --keep-intermediates で実行済み
 mv $W/out $W/out-cpu
 scripts/submit-slurm.sh --job job.json --workdir $W --partition <CPUパーティション> \
   --from call --variant parabricks --sif /shared/…/parabricks-vg.sif \
