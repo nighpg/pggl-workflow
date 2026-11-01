@@ -1421,3 +1421,12 @@ default single-process run):
   deleted as each lane's FASTQ is written, but at their peak they take roughly
   one lightly compressed copy of the input on top of the FASTQs. A CRAM/BAM with
   a single `@RG` (or none) is streamed straight to one lane as before.
+
+## License
+
+The workflows, scripts and documentation in this repository are released under
+the MIT License (see `LICENSE`). The tools they run keep their own licenses:
+vg (MIT), DeepVariant (BSD-3-Clause), cwltool (Apache-2.0), samtools/bcftools
+(MIT/Expat), biobambam2 and KMC (GPL-3.0), and NVIDIA Parabricks (NVIDIA's
+license terms). The repository ships none of their binaries; the `sif-build*.def`
+files fetch them when an image is built.
