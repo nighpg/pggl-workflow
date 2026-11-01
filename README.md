@@ -14,7 +14,7 @@ unchanged.
 | --- | --- | --- | --- |
 | `Workflows/germline-pangenome-cpu.cwl` | `vg giraffe` (one job per read group, CWL scatter) | DeepVariant (`google/deepvariant:1.10.0`) | Portable; runs without containers when tools are on `$PATH` |
 | `Workflows/germline-pangenome-gpu.cwl` | `vg giraffe` (CPU, same as above) | DeepVariant GPU (`google/deepvariant:1.10.0-gpu`) | Identical inputs/outputs to the CPU workflow; the five DeepVariant steps run on the GPU (auto-detected when CUDA is visible). Requires a CUDA driver on the host and a container started with GPU passthrough (`singularity exec --nv ...`) |
-| `Workflows/germline-pangenome-parabricks.cwl` | `vg giraffe` (CPU, same as above) | NVIDIA Parabricks DeepVariant (`pbrun deepvariant`, `nvcr.io/nvidia/clara/clara-parabricks:4.8.0-1`) | Identical inputs/outputs to the CPU workflow plus `num_gpus`; Parabricks accelerates make_examples as well as call_variants. Needs an NVIDIA GPU host, `--nv`, and the image from `sif-build-parabricks.def`. Not validated on GPUs yet: benchmark a sample before production use (see *Parabricks track*) |
+| `Workflows/germline-pangenome-parabricks.cwl` | `vg giraffe` (CPU, same as above) | NVIDIA Parabricks DeepVariant (`pbrun deepvariant`, `nvcr.io/nvidia/clara/clara-parabricks:4.8.0-1`) | Identical inputs/outputs to the CPU workflow plus `num_gpus`; Parabricks accelerates make_examples as well as call_variants. Needs an NVIDIA GPU host, `--nv`, and the image from `sif-build-parabricks.def`. Tested on a GPU cluster with a whole-genome sample; results match DeepVariant closely but not bit for bit (see *Parabricks track*) |
 | `Workflows/germline-pangenome-pangenome-aware-cpu.cwl` | `vg giraffe` (CPU, same as above) | pangenome-aware DeepVariant (`google/deepvariant:pangenome_aware_deepvariant-1.10.0`) | Same inputs and outputs, but the caller also sees the graph's haplotypes (see *Pangenome-aware calling*). Needs its own image: the pangenome-aware one ships no plain `run_deepvariant`. **Only works on a graph whose reference is whole paths** — not JaSaPaGe's GRCh38 |
 | `Workflows/haplotype-sample.cwl` | — | — | Preparation, not a germline run: builds a sample's personalized pangenome and its giraffe indexes for any of the above to then use (see *Haplotype sampling*) |
 
@@ -446,10 +446,10 @@ and Google GPU variants only; pre-split chunks would just repeat pbrun's
 start-up and model load, and running several at once would have them compete
 for the same GPUs.
 
-The workflow, tool and image are checked with `cwltool --validate` and the
-image's `%test`, but have not run on a GPU here: Parabricks reimplements
-DeepVariant, so compare a benchmark sample (e.g. HG002 chr20 against the CPU
-track) before switching production runs.
+The Parabricks track has run end to end on a GPU cluster, a whole-genome HG002
+sample re-mapped to a personalized graph with four GPUs per calling job.
+Parabricks reimplements DeepVariant, so its calls match the CPU track closely
+but not bit for bit; compare a benchmark sample when switching production runs.
 
 ### Keep the graph and indexes on node-local disk
 

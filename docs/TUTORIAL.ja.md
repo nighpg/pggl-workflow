@@ -512,8 +512,8 @@ scripts/submit-slurm.sh --job job.json --workdir $W --partition <CPUパーティ
   --call-sbatch "-p <GPUパーティション> --exclusive --mem=0 --gres=gpu:<N>"
 ```
 
-> Parabricks の経路は、CWL の検証と仮の `pbrun` を使った toy の実行までは確かめて
-> いますが、実際の GPU ではまだ動かしていません。
+> Parabricks の経路は、GPU クラスタで全ゲノムの試料（HG002 を personalized グラフに
+> 再マッピングし、call ジョブあたり GPU 4 枚）を最後まで実行して確かめています。
 
 ### 7.7 BWA の CRAM を personalized グラフで解析する（1 コマンド）
 
