@@ -1,7 +1,7 @@
 #!/usr/bin/env cwl-runner
 
-# The GPU half of the calling stage: the five NVIDIA Parabricks DeepVariant
-# calls (autosome chunks, PAR, chrX female/male, chrY) on the duplicate-marked
+# The GPU part of the calling stage: the five NVIDIA Parabricks DeepVariant
+# calls (autosome, PAR, chrX female/male, chrY) on the duplicate-marked
 # BAM of parts/call-markdup.cwl. Nothing else runs here, so a GPU node is
 # held only for the calls themselves.
 
@@ -33,19 +33,6 @@ inputs:
     type: File
     doc: Interval BED file for autosome regions
 
-  autosome_chunks:
-    type:
-      - type: array
-        items: File
-      - "null"
-    doc: Optional explicit list of BED files partitioning the autosome. Leave unset to derive the chunks automatically (see autosome_chunks_count); when set, these are used verbatim, in this order.
-    default: []
-
-  autosome_chunks_count:
-    type: int?
-    doc: Convenience knob for automatic autosome chunking. Omit or 0 = a single chunk over the whole autosome (the previous default); N>=2 groups contiguous contigs into ~N bp-balanced chunks (a contig is never split); if N >= the number of contigs, one chunk per contig. Ignored when autosome_chunks is set. DeepVariant still shards each chunk internally via base_shards. Non-HS37 DNA sites that fall in no chunk are dropped.
-    default: 0
-
   PAR_interval:
     type: File
     doc: Interval BED file for PAR regions
@@ -73,48 +60,22 @@ inputs:
     default: 1
 
 steps:
-  make_autosome_chunks:
-    run: ../../Tools/make-autosome-chunks.cwl
-    in:
-      bed: autosome_interval
-      count: autosome_chunks_count
-      user_chunks: autosome_chunks
-    out:
-      - chunks
-
-  autosome_regions:
-    run: ../../Tools/autosome-regions.cwl
-    in:
-      autosome_chunks: make_autosome_chunks/chunks
-      autosome_interval: autosome_interval
-      base_shards: threads
-      prefix: prefix
-    out:
-      - chunks
-      - prefixes
-      - shards
-
+  # One pbrun over the whole autosome: Parabricks splits the genome across the
+  # GPUs itself, so pre-split chunks would only repeat its start-up and model
+  # load (autosome_chunks / autosome_chunks_count are for the CPU variants).
   deepvariant_autosome:
     run: ../../Tools/parabricks-deepvariant.cwl
     in:
       ref: ref
       reads: bam
-      interval: autosome_regions/chunks
-      num_shards: autosome_regions/shards
+      interval: autosome_interval
+      num_shards: threads
       num_gpus: num_gpus
-      prefix: autosome_regions/prefixes
-    scatter: [interval, num_shards, prefix]
-    scatterMethod: dotproduct
+      prefix:
+        source: prefix
+        valueFrom: $(self + ".autosome")
     out:
       - gvcf
-
-  concat_autosome:
-    run: ../../Tools/concat-gvcfs.cwl
-    in:
-      prefix: prefix
-      gvcf: deepvariant_autosome/gvcf
-    out:
-      - out_gvcf
 
   deepvariant_PAR:
     run: ../../Tools/parabricks-deepvariant.cwl
@@ -180,7 +141,7 @@ outputs:
   gvcf_autosome:
     type: File
     doc: Diploid gVCF for autosome regions (reference coordinates)
-    outputSource: concat_autosome/out_gvcf
+    outputSource: deepvariant_autosome/gvcf
     secondaryFiles:
       - .tbi
 

@@ -476,6 +476,11 @@ DeepVariant の間だけです。DeepVariant は BAM ができた時点で始ま
 | sv | vg pack → vg call → `.nonrep` | `--partition`（CPU）、`--sv-sbatch` | レーンの後（markdup と並行） |
 | call | DeepVariant × 5（markdup の BAM を読む） | `--call-sbatch` に GPU のパーティションと `--gres` | markdup の後 |
 
+`pbrun` は 1 つの区間を割り当てられた GPU 全部に分けて処理するので、Parabricks では
+常染色体を分割しません（`autosome_chunks_count` は CPU 版用で、Parabricks では使われません）。
+call ジョブは autosome・PAR・chrX（女性／男性）・chrY の 5 回の `pbrun` を 1 本ずつ順に、
+それぞれ `num_gpus` 枚の GPU で実行します。
+
 call だけが失敗したときは、`--from dv` で GPU のジョブだけを投入し直せます
 （markdup の BAM と sv の結果はそのまま使います）。
 

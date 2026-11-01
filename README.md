@@ -434,6 +434,14 @@ and `--gres` go. `--from dv` resubmits only the GPU job, reusing the BAM in
 `out/`. `parts/call-parabricks.cwl` chains the same three parts for
 single-node runs.
 
+pbrun spreads one interval over all the GPUs it is given, so the Parabricks
+variant makes exactly five calls -- the whole autosome, PAR, chrX female and
+male, chrY -- and the GPU job runs them one after another, each with
+`num_gpus` GPUs. `autosome_chunks_count` / `autosome_chunks` apply to the CPU
+and Google GPU variants only; pre-split chunks would just repeat pbrun's
+start-up and model load, and running several at once would have them compete
+for the same GPUs.
+
 The workflow, tool and image are checked with `cwltool --validate` and the
 image's `%test`, but have not run on a GPU here: Parabricks reimplements
 DeepVariant, so compare a benchmark sample (e.g. HG002 chr20 against the CPU

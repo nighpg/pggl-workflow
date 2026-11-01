@@ -77,7 +77,8 @@
 #                        several nodes mapping the same files stall on lock
 #                        traffic.
 #   --no-local-index     map straight from the shared copies
-#   --no-call-parallel   run stage 3 with a serial cwltool. By default it runs
+#   --no-call-parallel   run stage 3 with a serial cwltool (the Parabricks GPU job
+#                        always runs serially: each pbrun uses all its GPUs). By default it runs
 #                        with --parallel, so the autosome chunks
 #                        (autosome_chunks_count) and the other DeepVariant calls
 #                        share the node as their coresMin allows; serially, N
@@ -470,7 +471,9 @@ cat > "$W/3-call.sh" <<'EOF'
 source "__W__/env.sh"
 if [ "$SPLIT" = 1 ]; then
     python3 "$HELPER" dv "$W/job.json" "$W/out-markdup.json" "$PARTS/call-dv-$VARIANT.cwl" "$W/call.job.json"
-    run_part call "$PARTS/call-dv-$VARIANT.cwl" "$W/call.job.json" "$W/out.json" --outdir "$W/out" $CALL_CWLTOOL_OPTS
+    # serially: every pbrun spreads its interval over all the job's GPUs, so
+    # two at once would only contend for them (no --parallel here)
+    run_part call "$PARTS/call-dv-$VARIANT.cwl" "$W/call.job.json" "$W/out.json" --outdir "$W/out"
     # 3a always writes the BAM, since 3b reads it; drop it now if it is not wanted
     if [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("keep_bam", True))' "$W/job.json")" = False ]; then
         rm -f "$W/out/$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["prefix"])' "$W/job.json").bam"{,.bai}
