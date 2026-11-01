@@ -1,16 +1,10 @@
 #!/usr/bin/env cwl-runner
 
-# The CPU half of the calling stage: duplicate marking over all lanes and the
-# graph SV track (vg pack + vg call). Its BAM feeds parts/call-dv-parabricks.cwl.
-#
-# parts/call-parabricks.cwl chains the two halves for the single-node workflow;
-# scripts/submit-slurm.sh --variant parabricks runs them as two Slurm jobs, this
-# one on a CPU node and the DeepVariant one on a GPU node, so a GPU node is held
-# only while the GPUs work.
-
+# The graph SV track: vg pack over the lane GAMs, vg call, and the .nonrep
+# filter. It needs no BAM, so on Slurm it runs beside parts/call-markdup.cwl.
 class: Workflow
-id: call-markdup-sv
-label: call-markdup-sv
+id: call-sv
+label: call-sv
 cwlVersion: v1.1
 
 requirements:
@@ -78,18 +72,6 @@ inputs:
     type: string
     doc: Sample name written into the SV VCF (the SM of the read groups, from parts/prepare-lanes.cwl)
     default: SAMPLE
-
-  namecol_bams:
-    type: File[]
-    doc: Name-collated lane BAMs from parts/lane-align.cwl, in lane order; duplicate-marked together
-
-  gams:
-    type:
-      - "null"
-      - type: array
-        items: ["null", File]
-    doc: Lane GAMs to pass through as the gam output (emit_gam); nulls are dropped
-    default: []
 
   pack_gams:
     type:
@@ -178,25 +160,6 @@ steps:
       - nonrep_vcf_chrX_male
       - nonrep_vcf_chrY
 
-  pick_gam:
-    run: ../../Tools/pick-gam.cwl
-    in:
-      gam_in: gams
-    out:
-      - gam
-
-  to_markdup_bam:
-    run: ../../Tools/bamsormadup-to-markdup-bam.cwl
-    in:
-      namecol_bams:
-        source: namecol_bams
-        valueFrom: '$(self != null && self.length > 0 ? self : null)'
-      prefix: prefix
-      threads: threads
-    out:
-      - bam
-      - markdup_metrics
-
 outputs:
   sv_nonrep_vcf:
     type: File?
@@ -226,18 +189,6 @@ outputs:
     secondaryFiles:
       - .tbi
 
-  bam:
-    type: File
-    doc: BAM duplicate-marked, in reference coordinates; always written, since the DeepVariant calls read it
-    outputSource: to_markdup_bam/bam
-    secondaryFiles:
-      - .bai
-
-  gam:
-    type: File[]?
-    doc: Per-lane graph-space alignment in GAM format (kept when emit_gam is true)
-    outputSource: pick_gam/gam
-
   sv_vcf:
     type: File?
     doc: Structural variants of the pangenome graph genotyped for this sample over the autosomes and PAR, diploid, in reference coordinates (produced when call_sv is true)
@@ -264,8 +215,3 @@ outputs:
     outputSource: keep_pack_gate/pack
     secondaryFiles:
       - .tbi
-
-  markdup_metrics:
-    type: File
-    doc: MarkDuplicates statistics (replaces the BQSR table of the linear WGSpipeline)
-    outputSource: to_markdup_bam/markdup_metrics

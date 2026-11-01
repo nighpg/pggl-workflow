@@ -32,8 +32,8 @@ Subcommands:
                                                jobs only (threads, align_chunks)
   call       JOB PREPARE_OUT LANES_DIR PART OUT
                                                stage-3 job from the lane outputs (with
-                                               parabricks, the markdup job 3a)
-  dv         JOB MARKDUP_OUT PART OUT          the GPU job 3b of a split stage 3: the
+                                               parabricks, the markdup and sv jobs 3a/3b)
+  dv         JOB MARKDUP_OUT PART OUT          the GPU job 3c of a split stage 3: the
                                                job's DeepVariant inputs and 3a's BAM
   stage-local JOB DIR OUT KEY...               copy the files of KEY... (e.g. the
                                                giraffe indexes) into DIR, reusing a
@@ -191,11 +191,14 @@ def main(argv):
             if not os.path.exists(f):
                 sys.exit(f"slurm-jobs.py: lane {i + 1} ({l['lane']}) has no output: {f}")
             outs.append(load(f))
-        c = subset(j, part_inputs(part))
-        c["sample_name"] = sample_of([l["rg"] for l in lanes])
-        c["namecol_bams"] = [o["namecol_bam"] for o in outs]
-        c["gams"] = [o.get("gam") for o in outs]
-        c["pack_gams"] = [o.get("pack_gam") for o in outs]
+        keys = part_inputs(part)
+        c = subset(j, keys)
+        wired = dict(sample_name=sample_of([l["rg"] for l in lanes]),
+                     namecol_bams=[o["namecol_bam"] for o in outs],
+                     gams=[o.get("gam") for o in outs],
+                     pack_gams=[o.get("pack_gam") for o in outs])
+        # the split parts (call-markdup, call-sv) take only some of these
+        c.update({k: v for k, v in wired.items() if k in keys})
         dump(c, out)
 
     elif cmd == "dv":

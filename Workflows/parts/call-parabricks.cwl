@@ -5,10 +5,11 @@
 # SV track (vg pack + vg call) when lane GAMs are given.
 #
 # Used as a subworkflow by Workflows/germline-pangenome-parabricks.cwl. It chains
-# the two halves, parts/call-markdup-sv.cwl (CPU: duplicate marking, graph SVs)
-# and parts/call-dv-parabricks.cwl (GPU: DeepVariant); scripts/submit-slurm.sh
-# runs those halves as separate Slurm jobs so that the GPU node is held only for
-# DeepVariant. Edit the steps there, not here.
+# three parts: parts/call-markdup.cwl (CPU: duplicate marking),
+# parts/call-sv.cwl (CPU: graph SVs) and parts/call-dv-parabricks.cwl (GPU:
+# DeepVariant on the markdup BAM). scripts/submit-slurm.sh runs them as separate
+# Slurm jobs, so the GPU node is held only for DeepVariant and DeepVariant does
+# not wait for the SVs. Edit the steps there, not here.
 
 class: Workflow
 id: call-parabricks
@@ -144,8 +145,20 @@ inputs:
     default: 1
 
 steps:
-  markdup_sv:
-    run: call-markdup-sv.cwl
+  markdup:
+    run: call-markdup.cwl
+    in:
+      prefix: prefix
+      threads: threads
+      namecol_bams: namecol_bams
+      gams: gams
+    out:
+      - bam
+      - gam
+      - markdup_metrics
+
+  sv:
+    run: call-sv.cwl
     in:
       gbz: gbz
       ref_paths: ref_paths
@@ -160,8 +173,6 @@ steps:
       keep_pack: keep_pack
       sv_min_length: sv_min_length
       sample_name: sample_name
-      namecol_bams: namecol_bams
-      gams: gams
       pack_gams: pack_gams
       sv_exclude_bed: sv_exclude_bed
       sv_filter_min_qual: sv_filter_min_qual
@@ -171,19 +182,16 @@ steps:
       - sv_nonrep_vcf_chrX_female
       - sv_nonrep_vcf_chrX_male
       - sv_nonrep_vcf_chrY
-      - bam
-      - gam
       - sv_vcf
       - sv_vcf_chrX_female
       - sv_vcf_chrX_male
       - sv_vcf_chrY
       - pack
-      - markdup_metrics
 
   keep_bam_gate:
     run: ../../Tools/keep-bam.cwl
     in:
-      bam_in: markdup_sv/bam
+      bam_in: markdup/bam
       keep: keep_bam
     out:
       - bam
@@ -201,7 +209,7 @@ steps:
       prefix: prefix
       threads: threads
       num_gpus: num_gpus
-      bam: markdup_sv/bam
+      bam: markdup/bam
     out:
       - gvcf_autosome
       - gvcf_PAR
@@ -213,28 +221,28 @@ outputs:
   sv_nonrep_vcf:
     type: File?
     doc: Graph SVs of the autosomes and PAR kept by the sv_exclude_bed filter (simple DEL/INS outside the excluded regions; produced when call_sv is true and sv_exclude_bed is given)
-    outputSource: markdup_sv/sv_nonrep_vcf
+    outputSource: sv/sv_nonrep_vcf
     secondaryFiles:
       - .tbi
 
   sv_nonrep_vcf_chrX_female:
     type: File?
     doc: As sv_nonrep_vcf, chrX outside PAR, diploid
-    outputSource: markdup_sv/sv_nonrep_vcf_chrX_female
+    outputSource: sv/sv_nonrep_vcf_chrX_female
     secondaryFiles:
       - .tbi
 
   sv_nonrep_vcf_chrX_male:
     type: File?
     doc: As sv_nonrep_vcf, chrX outside PAR, haploid
-    outputSource: markdup_sv/sv_nonrep_vcf_chrX_male
+    outputSource: sv/sv_nonrep_vcf_chrX_male
     secondaryFiles:
       - .tbi
 
   sv_nonrep_vcf_chrY:
     type: File?
     doc: As sv_nonrep_vcf, chrY outside PAR, haploid
-    outputSource: markdup_sv/sv_nonrep_vcf_chrY
+    outputSource: sv/sv_nonrep_vcf_chrY
     secondaryFiles:
       - .tbi
 
@@ -248,39 +256,39 @@ outputs:
   gam:
     type: File[]?
     doc: Per-lane graph-space alignment in GAM format (kept when emit_gam is true)
-    outputSource: markdup_sv/gam
+    outputSource: markdup/gam
 
   sv_vcf:
     type: File?
     doc: Structural variants of the pangenome graph genotyped for this sample over the autosomes and PAR, diploid, in reference coordinates (produced when call_sv is true)
-    outputSource: markdup_sv/sv_vcf
+    outputSource: sv/sv_vcf
 
   sv_vcf_chrX_female:
     type: File?
     doc: Genotyped graph SVs on chrX outside PAR, diploid. Emitted alongside the male file because the sample's sex is not an input, exactly as the gVCFs are.
-    outputSource: markdup_sv/sv_vcf_chrX_female
+    outputSource: sv/sv_vcf_chrX_female
 
   sv_vcf_chrX_male:
     type: File?
     doc: Genotyped graph SVs on chrX outside PAR, haploid
-    outputSource: markdup_sv/sv_vcf_chrX_male
+    outputSource: sv/sv_vcf_chrX_male
 
   sv_vcf_chrY:
     type: File?
     doc: Genotyped graph SVs on chrY outside PAR, haploid
-    outputSource: markdup_sv/sv_vcf_chrY
+    outputSource: sv/sv_vcf_chrY
 
   pack:
     type: File?
     doc: Sample-wide vg pack read support in graph space (materialised when keep_pack is true). Re-runs of vg call need only this and the graph's snarls.
-    outputSource: markdup_sv/pack
+    outputSource: sv/pack
     secondaryFiles:
       - .tbi
 
   markdup_metrics:
     type: File
     doc: MarkDuplicates statistics (replaces the BQSR table of the linear WGSpipeline)
-    outputSource: markdup_sv/markdup_metrics
+    outputSource: markdup/markdup_metrics
 
   gvcf_autosome:
     type: File

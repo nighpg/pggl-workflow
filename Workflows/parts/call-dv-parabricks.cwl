@@ -2,7 +2,7 @@
 
 # The GPU half of the calling stage: the five NVIDIA Parabricks DeepVariant
 # calls (autosome chunks, PAR, chrX female/male, chrY) on the duplicate-marked
-# BAM of parts/call-markdup-sv.cwl. Nothing else runs here, so a GPU node is
+# BAM of parts/call-markdup.cwl. Nothing else runs here, so a GPU node is
 # held only for the calls themselves.
 
 class: Workflow
@@ -25,7 +25,7 @@ inputs:
 
   bam:
     type: File
-    doc: Duplicate-marked BAM in reference coordinates (parts/call-markdup-sv.cwl)
+    doc: Duplicate-marked BAM in reference coordinates (parts/call-markdup.cwl)
     secondaryFiles:
       - .bai
 

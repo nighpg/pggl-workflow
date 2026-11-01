@@ -447,23 +447,24 @@ scripts/submit-slurm.sh \
   --variant parabricks --sif /shared/…/parabricks-vg.sif \
   --prepare-sbatch "--cpus-per-task=2 --mem=8G" \
   --lane-threads 4 --lane-mem-per-chunk 8 \
-  --markdup-sbatch "--cpus-per-task=8 --mem=16G" \
+  --markdup-sbatch "--cpus-per-task=8 --mem=16G" --sv-sbatch "--cpus-per-task=8 --mem=16G" \
   --call-sbatch "-p <GPUパーティション> --cpus-per-task=8 --mem=32G --gres=gpu:1"
 ```
 
-成功の基準は、prepare・lane・markdup・call の 4 つが `COMPLETED` になり、`out/` に
+成功の基準は、prepare・lane・markdup・sv・call の 5 つが `COMPLETED` になり、`out/` に
 13 ファイルがそろうことです。
 
-`--variant parabricks` では段階 3 が 2 つのジョブに分かれ、GPU ノードを使うのは
-DeepVariant の間だけです。
+`--variant parabricks` では段階 3 が 3 つのジョブに分かれ、GPU ノードを使うのは
+DeepVariant の間だけです。DeepVariant は BAM ができた時点で始まり、SV を待ちません。
 
-| ジョブ | 中身 | 場所 |
-| --- | --- | --- |
-| markdup | 重複マーク、グラフ SV | `--partition`（CPU）。sbatch オプションは `--markdup-sbatch` |
-| call | DeepVariant × 5（markdup の BAM を読む） | `--call-sbatch` に GPU のパーティションと `--gres` を書く |
+| ジョブ | 中身 | 場所 | 開始 |
+| --- | --- | --- | --- |
+| markdup | 重複マーク | `--partition`（CPU）、`--markdup-sbatch` | レーンの後 |
+| sv | vg pack → vg call → `.nonrep` | `--partition`（CPU）、`--sv-sbatch` | レーンの後（markdup と並行） |
+| call | DeepVariant × 5（markdup の BAM を読む） | `--call-sbatch` に GPU のパーティションと `--gres` | markdup の後 |
 
 call だけが失敗したときは、`--from dv` で GPU のジョブだけを投入し直せます
-（markdup の BAM と SV はそのまま使います）。
+（markdup の BAM と sv の結果はそのまま使います）。
 
 **実データで投入する。** job ファイルに `"num_gpus": <N>` を加え、次のように投入します。
 
@@ -476,7 +477,7 @@ scripts/submit-slurm.sh \
   --call-sbatch "-p <GPUパーティション> --exclusive --mem=0 --gres=gpu:<N>"
 ```
 
-prepare・レーン・markdup は `--partition` の CPU ノードで、call だけが GPU ノードで動きます。
+prepare・レーン・markdup・sv は `--partition` の CPU ノードで、call だけが GPU ノードで動きます。
 
 **CPU 版と比べる。** Parabricks は DeepVariant を再実装したもので、結果はほぼ同じですが
 ビット単位では一致しません。本番を切り替える前に、ベンチマーク試料（HG002 など）で

@@ -10,11 +10,13 @@
 #   3. call     (1 job, after      Workflows/parts/call-<variant>.cwl
 #               every lane)        duplicate marking, DeepVariant, graph SVs
 #
-# With --variant parabricks stage 3 is two jobs, so that a GPU node is held only
-# while the GPUs work:
-#   3a. markdup (CPU, after        Workflows/parts/call-markdup-sv.cwl
-#               every lane)        duplicate marking, graph SVs
-#   3b. call    (GPU, after 3a)    Workflows/parts/call-dv-parabricks.cwl
+# With --variant parabricks stage 3 is three jobs, so that a GPU node is held
+# only while the GPUs work and DeepVariant does not wait for the SVs:
+#   3a. markdup (CPU, after        Workflows/parts/call-markdup.cwl
+#               every lane)        duplicate marking
+#   3b. sv      (CPU, after        Workflows/parts/call-sv.cwl
+#               every lane)        vg pack, vg call, the .nonrep filter
+#   3c. call    (GPU, after 3a)    Workflows/parts/call-dv-parabricks.cwl
 #                                  the five DeepVariant calls on 3a's BAM
 #
 # These are the same parts Workflows/germline-pangenome-<variant>.cwl runs in one
@@ -61,10 +63,11 @@
 #   128-core node overlap their loading and did a lane every ~47 s; one lane
 #   with the whole node took ~110-123 s however it was split.
 #   --call-sbatch S      extra sbatch options for stage 3 (with parabricks, the
-#                        GPU job 3b: put its partition and --gres here)
+#                        GPU job 3c: put its partition and --gres here)
 #                        (default: "--exclusive --mem=0 --cpus-per-task=<threads>")
 #   --markdup-sbatch S   sbatch options for job 3a (parabricks only); it runs in
 #                        --partition (default: as --call-sbatch's default)
+#   --sv-sbatch S        the same for job 3b
 #   --max-lanes N        run at most N lane tasks at once (array %N)
 #   --local-index DIR    node-local directory the lane tasks copy the graph and
 #                        giraffe indexes into before mapping (default /tmp;
@@ -83,8 +86,8 @@
 #   --from call          only (re)submit stage 3, reusing the lanes an earlier
 #                        run left in DIR (e.g. after changing the calling
 #                        options, or after a failed or cancelled calling job)
-#   --from dv            parabricks only: resubmit just the GPU job 3b, reusing
-#                        the BAM and SVs job 3a left in DIR/out
+#   --from dv            parabricks only: resubmit just the GPU job 3c, reusing
+#                        the BAM job 3a left in DIR/out (and leaving 3b's SVs)
 #   --dry-run            write the stage scripts and jobs, submit nothing
 #
 # The workflow files are taken from this checkout (so the parts always match the
@@ -109,6 +112,7 @@ PREPARE_SBATCH=
 LANE_SBATCH=
 CALL_SBATCH=
 MARKDUP_SBATCH=
+SV_SBATCH=
 MAX_LANES=
 LOCAL_INDEX=/tmp
 LANE_THREADS=32
@@ -133,6 +137,7 @@ while [ "$#" -gt 0 ]; do
         --lane-sbatch) LANE_SBATCH=$2; shift 2 ;;
         --call-sbatch) CALL_SBATCH=$2; shift 2 ;;
         --markdup-sbatch) MARKDUP_SBATCH=$2; shift 2 ;;
+        --sv-sbatch) SV_SBATCH=$2; shift 2 ;;
         --max-lanes) MAX_LANES=$2; shift 2 ;;
         --local-index) LOCAL_INDEX=$2; shift 2 ;;
         --lane-threads) LANE_THREADS=$2; shift 2 ;;
@@ -185,6 +190,7 @@ else
 fi
 : "${CALL_SBATCH:=--exclusive --mem=0 --cpus-per-task=$THREADS}"
 : "${MARKDUP_SBATCH:=--exclusive --mem=0 --cpus-per-task=$THREADS}"
+: "${SV_SBATCH:=--exclusive --mem=0 --cpus-per-task=$THREADS}"
 SPLIT=0
 [ "$VARIANT" = parabricks ] && SPLIT=1
 PREPARE_THREADS=$(printf '%s\n' $PREPARE_SBATCH | sed -n 's/^--cpus-per-task=//p; s/^-c//p' | tail -1)
@@ -276,6 +282,7 @@ ARRAY_LIMIT="$ARRAY_LIMIT"
 LANE_SBATCH="$LANE_SBATCH"
 CALL_SBATCH="$CALL_SBATCH"
 MARKDUP_SBATCH="$MARKDUP_SBATCH"
+SV_SBATCH="$SV_SBATCH"
 SPLIT=$SPLIT
 JOBNAME=pggl-$PREFIX
 CALL_CWLTOOL_OPTS="$([ "$CALL_PARALLEL" = 1 ] && echo --parallel)"
@@ -326,7 +333,8 @@ bash "$W/submit-call.sh" "$LANE_JOB"
 EOF
 
 # Submits stage 3 after the job given as $1 (none: at once); with $2 = dv, only
-# the GPU job of a split stage 3.
+# the GPU job of a split stage 3. Split, the SV job runs beside the markdup job
+# and the GPU job waits for the markdup job alone.
 cat > "$W/submit-call.sh" <<'EOF'
 #!/usr/bin/env bash
 source "__W__/env.sh"
@@ -336,7 +344,10 @@ if [ "$SPLIT" = 1 ] && [ "${2:-}" != dv ]; then
     MARKDUP_JOB=$(sbatch --parsable $PART_OPT $MARKDUP_SBATCH --job-name="$JOBNAME-markdup" $DEP \
         --output="$W/logs/markdup.%j.out" --error="$W/logs/markdup.%j.err" "$W/3-markdup.sh")
     record markdup "$MARKDUP_JOB"
-    echo "submitted markdup job $MARKDUP_JOB"
+    SV_JOB=$(sbatch --parsable $PART_OPT $SV_SBATCH --job-name="$JOBNAME-sv" $DEP \
+        --output="$W/logs/sv.%j.out" --error="$W/logs/sv.%j.err" "$W/3-sv.sh")
+    record sv "$SV_JOB"
+    echo "submitted markdup job $MARKDUP_JOB and sv job $SV_JOB"
     DEP="--dependency=afterok:$MARKDUP_JOB --kill-on-invalid-dep=yes"
 fi
 CALL_JOB=$(sbatch --parsable $PART_OPT $CALL_SBATCH --job-name="$JOBNAME-call" $DEP \
@@ -387,13 +398,19 @@ run_part "lane-$L" "$PARTS/lane-align.cwl" "$JOBFILE" "$D/out.json" --outdir "$D
 EOF
 
 # Stage 3: duplicate marking, variant calling and SVs, into out/.
-# Split (parabricks): 3a duplicate marking and SVs on a CPU node, 3b DeepVariant
-# on a GPU node over 3a's BAM; both write into out/.
+# Split (parabricks): 3a duplicate marking and 3b graph SVs on CPU nodes, 3c
+# DeepVariant on a GPU node over 3a's BAM; all three write into out/.
 cat > "$W/3-markdup.sh" <<'EOF'
 #!/usr/bin/env bash
 source "__W__/env.sh"
-python3 "$HELPER" call "$W/job.json" "$W/prepare.out.json" "$W/lanes" "$PARTS/call-markdup-sv.cwl" "$W/markdup.job.json"
-run_part markdup "$PARTS/call-markdup-sv.cwl" "$W/markdup.job.json" "$W/out-markdup.json" --outdir "$W/out" $CALL_CWLTOOL_OPTS
+python3 "$HELPER" call "$W/job.json" "$W/prepare.out.json" "$W/lanes" "$PARTS/call-markdup.cwl" "$W/markdup.job.json"
+run_part markdup "$PARTS/call-markdup.cwl" "$W/markdup.job.json" "$W/out-markdup.json" --outdir "$W/out" $CALL_CWLTOOL_OPTS
+EOF
+cat > "$W/3-sv.sh" <<'EOF'
+#!/usr/bin/env bash
+source "__W__/env.sh"
+python3 "$HELPER" call "$W/job.json" "$W/prepare.out.json" "$W/lanes" "$PARTS/call-sv.cwl" "$W/sv.job.json"
+run_part sv "$PARTS/call-sv.cwl" "$W/sv.job.json" "$W/out-sv.json" --outdir "$W/out" $CALL_CWLTOOL_OPTS
 EOF
 cat > "$W/3-call.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -412,8 +429,8 @@ fi
 EOF
 # sbatch runs a spooled copy of each script, so they cannot find env.sh
 # relative to themselves; the work dir is written in instead.
-sed -i "s#__W__#$W#" "$W/1-prepare.sh" "$W/2-lane.sh" "$W/3-markdup.sh" "$W/3-call.sh" "$W/submit-call.sh"
-chmod +x "$W/1-prepare.sh" "$W/2-lane.sh" "$W/3-markdup.sh" "$W/3-call.sh" "$W/submit-call.sh"
+sed -i "s#__W__#$W#" "$W/1-prepare.sh" "$W/2-lane.sh" "$W/3-markdup.sh" "$W/3-sv.sh" "$W/3-call.sh" "$W/submit-call.sh"
+chmod +x "$W/1-prepare.sh" "$W/2-lane.sh" "$W/3-markdup.sh" "$W/3-sv.sh" "$W/3-call.sh" "$W/submit-call.sh"
 
 NAME="pggl-$PREFIX"
 case "$FROM" in
@@ -435,9 +452,9 @@ case "$FROM" in
         fi
         rm -rf "$W/out.json" "$W/tmp/call" "$W/tmp-out/call"
         if [ "$FROM" = call ]; then
-            rm -rf "$W/out" "$W/out-markdup.json" "$W/tmp/markdup" "$W/tmp-out/markdup"
+            rm -rf "$W/out" "$W/out-markdup.json" "$W/out-sv.json" "$W/tmp/markdup" "$W/tmp-out/markdup" "$W/tmp/sv" "$W/tmp-out/sv"
         else
-            # keep 3a's outputs, drop only what 3b writes
+            # keep 3a's and 3b's outputs, drop only what 3c writes
             rm -f "$W/out/"*.g.vcf.gz "$W/out/"*.g.vcf.gz.tbi
         fi
         bash "$W/submit-call.sh" "" "$FROM"

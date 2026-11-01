@@ -423,14 +423,16 @@ scripts/submit-slurm.sh --job job.json --workdir run1 --partition cpu \
   --call-sbatch "-p gpu --exclusive --mem=0 --gres=gpu:2"   # and "num_gpus": 2 in job.json
 ```
 
-On Slurm, `submit-slurm.sh --variant parabricks` splits the calling stage in
-two so that a GPU node is held only while the GPUs work: a markdup job
-(`parts/call-markdup-sv.cwl`: duplicate marking and the graph SVs) runs in
-`--partition` with `--markdup-sbatch`, then the call job
-(`parts/call-dv-parabricks.cwl`: the five DeepVariant calls on that BAM) runs
-with `--call-sbatch`, which is where the GPU partition and `--gres` go.
-`--from dv` resubmits only the GPU job, reusing the BAM and SVs in `out/`.
-`parts/call-parabricks.cwl` chains the same two halves for single-node runs.
+On Slurm, `submit-slurm.sh --variant parabricks` splits the calling stage into
+three jobs, so that a GPU node is held only while the GPUs work and DeepVariant
+does not wait for the SVs: a markdup job (`parts/call-markdup.cwl`) and an sv
+job (`parts/call-sv.cwl`: vg pack, vg call, `.nonrep`) start side by side in
+`--partition` (`--markdup-sbatch`, `--sv-sbatch`), and the call job
+(`parts/call-dv-parabricks.cwl`: the five DeepVariant calls) starts as soon as
+the markdup BAM exists, with `--call-sbatch`, which is where the GPU partition
+and `--gres` go. `--from dv` resubmits only the GPU job, reusing the BAM in
+`out/`. `parts/call-parabricks.cwl` chains the same three parts for
+single-node runs.
 
 The workflow, tool and image are checked with `cwltool --validate` and the
 image's `%test`, but have not run on a GPU here: Parabricks reimplements
