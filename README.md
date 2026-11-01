@@ -8,6 +8,10 @@ unchanged.
 - **Surjection at the aligner**: reads are mapped to the graph and projected onto the GRCh38 reference paths; everything downstream (`samtools`, DeepVariant, Manta, CNVkit, ...) stays linear.
 - **CWL first**: the CWL files are the source of truth.
 
+Accuracy on HG002 against GIAB (small variants, SVs, repeats, and a comparison
+with a BWA + HaplotypeCaller pipeline) is reported in
+[`docs/BENCHMARK-HG002.md`](docs/BENCHMARK-HG002.md).
+
 ## Workflow
 
 | File | Aligner | Variant caller | Notes |
