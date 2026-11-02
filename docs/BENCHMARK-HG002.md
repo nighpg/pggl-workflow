@@ -18,6 +18,10 @@ graph tested here, so it is an unbiased test sample.
   reached precision 0.979 and recall 0.862.
 - The 738-haplotype combined graph (C') matched C on small variants and on SVs
   outside repeats, but was worse on SVs inside tandem repeats.
+- Calling with NVIDIA Parabricks on four GPUs took 7.5 minutes for all five
+  DeepVariant calls. The SVs were identical to C, and SNP accuracy was the same.
+  INDEL F1 on v5.0q was 0.0017 lower (0.9566 against 0.9583), almost entirely in
+  tandem repeats and homopolymers.
 
 ## Setups
 
@@ -32,6 +36,7 @@ re-mapped.
 | C' | combined graph (738 haplotypes), personalized | DeepVariant 1.10.0 | `vg call` |
 | A | JaSaPaGe_GRCh38, full graph (40 haplotypes) | DeepVariant 1.10.0 | `vg call` |
 | B, D | as A, C | Pangenome-aware DeepVariant 1.10.0 | `vg call` |
+| C-PB | as C, run on an offline GPU cluster | NVIDIA Parabricks 4.8.0 `pbrun deepvariant`, 4 GPUs | `vg call` |
 | L | GRCh38 no_alt (BWA-MEM) | DeepVariant 1.10.0 | delly, Manta |
 | HC | GRCh38 with ALT and decoy (BWA) | GATK HaplotypeCaller | Manta |
 
@@ -187,6 +192,58 @@ Manta is precise but finds only 17% of HG002's SVs. The graph recovers 3.7 times
 as many genome-wide. Outside repeats, the `.nonrep` output beats Manta on
 precision as well as recall.
 
+## Parabricks (GPU) against CPU DeepVariant
+
+Setup C was run again end to end on an offline GPU cluster with
+`scripts/run-cram-personalized.sh --variant parabricks` (C-PB). It decoded the
+reads from a CRAM, sampled the personalized JaSaPaGe graph, mapped on CPU
+nodes, and ran the five DeepVariant calls with Parabricks on four GPUs.
+
+| Truth | Type | C-PB: recall | C-PB: precision | C-PB: F1 | C: F1 | Errors (FN + FP): C-PB | Errors: C |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| v4.2.1 | SNP | 0.99760 | 0.99789 | 0.99774 | 0.99776 | 15,185 | 15,091 |
+| v4.2.1 | INDEL | 0.99543 | 0.99665 | 0.99604 | 0.99629 | 4,235 | 3,962 |
+| v5.0q | SNP | 0.99304 | 0.99482 | 0.99393 | 0.99408 | 44,144 | 43,079 |
+| v5.0q | INDEL | 0.95246 | 0.96077 | 0.95660 | 0.95828 | 76,764 | 73,749 |
+
+**F1 by region (v5.0q), C-PB / C**
+
+| Region | SNP | INDEL |
+| --- | --- | --- |
+| Not difficult | 0.9996 / 0.9996 | 0.9969 / 0.9969 |
+| Low mappability or segdup | 0.9715 / 0.9715 | 0.9056 / 0.9078 |
+| Segmental duplications | 0.9509 / 0.9508 | 0.9114 / 0.9130 |
+| Tandem repeats and homopolymers | 0.9523 / 0.9539 | 0.9443 / 0.9465 |
+| MHC | 0.9945 / 0.9944 | 0.9541 / 0.9509 |
+| chrX outside PAR | 0.9946 / 0.9945 | 0.9677 / 0.9685 |
+| chrY outside PAR | 0.9441 / 0.9446 | 0.8997 / 0.9017 |
+
+- **Where the difference is:** of the 3,015 extra INDEL errors on v5.0q, 2,972
+  lie in tandem repeats and homopolymers. So do 1,034 of the 1,065 extra SNP
+  errors. Elsewhere the two callers agree to the fourth decimal, and Parabricks
+  is slightly better on MHC INDELs.
+- **Call-level agreement:** Parabricks reimplements DeepVariant. Of the PASS
+  autosomal calls carrying an ALT allele (about 5.07 million), 99.5% match by
+  position and allele. 23,666 calls are made by Parabricks only and 22,031 by
+  CPU DeepVariant only.
+- **SVs:** the graph SVs and the `.nonrep` output were identical to C (refine
+  F1 0.741; `.nonrep` precision 0.979, recall 0.862), since `vg call` does not
+  use DeepVariant. This also shows that the offline run reproduced the
+  personalized graph and the mapping exactly.
+
+**Run time on the GPU cluster**
+
+| Step | Node | Time |
+| --- | --- | --- |
+| Mapping (one lane, 35x) | CPU, 32 cores | 4 h 40 min |
+| Duplicate marking | CPU | 38 min |
+| Graph SVs (`vg pack`, `vg call`) | CPU, alongside duplicate marking | 43 min |
+| DeepVariant, five calls | GPU, 4 GPUs | 7.5 min |
+
+On the GPU, DeepVariant shrinks from most of the calling stage (5 h 19 min for
+duplicate marking, DeepVariant and SVs on one 128-core node in setup C) to a few
+minutes, so mapping sets the run time.
+
 ## The combined graph and the number of candidates
 
 The combined graph (738 haplotypes) is used through a personalized graph:
@@ -215,7 +272,8 @@ Measured on one 128-core AMD EPYC node per stage, with the whole genome:
 
 Sampling and indexing the personalized JaSaPaGe graph took 41 min on 128 cores.
 On the Slurm path, lanes map in parallel across nodes. With
-`--variant parabricks`, the calling stage moves DeepVariant to GPUs.
+`--variant parabricks`, DeepVariant moves to GPUs (see *Parabricks (GPU)
+against CPU DeepVariant*).
 
 ## How the evaluation was done
 
@@ -229,6 +287,7 @@ The figures are drawn from the tables above by `docs/figures/make_figures.py`.
 | Small-variant tool | hap.py v0.3.12, `--convert-gvcf-query --pass-only`, with `--stratification` |
 | SV tool | truvari 5.5.0 `bench --refine --pick ac --passonly -r 2000 -C 5000`, after `bcftools norm -m -any` and with `SVLEN` / `SVTYPE` / `SVSIM` removed; position-and-length rule `--pctseq 0 --dup-to-ins` |
 | Repeat SVs | `truvari bench --sizemin 5 --pick ac`, then `truvari refine --use-original-vcfs` |
+| Call-level agreement | PASS calls with an ALT genotype, multi-allelic records split and `<*>` dropped, compared with `bcftools isec -c none` |
 
 **Caveats**
 
