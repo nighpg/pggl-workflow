@@ -65,10 +65,14 @@ re-mapped.
 | L | 0.9870 | 0.9955 | 0.9912 | 0.9478 | 0.9682 | 0.9579 |
 | HC | 0.9826 | 0.9863 | 0.9845 | 0.8811 | 0.9376 | 0.9085 |
 
+![Errors (FN + FP) against GIAB v5.0q by setup](figures/small-variant-errors.svg)
+
 v5.0q covers more difficult sequence than v4.2.1, so its INDEL values are lower.
 More than 97% of the INDEL errors lie in tandem repeats and homopolymers.
 
 **F1 by region (v5.0q, GIAB stratifications v3.6)**
+
+![F1 by region for HaplotypeCaller, BWA + DeepVariant and the workflow](figures/small-variant-f1-by-region.svg)
 
 | Region | SNP: HC | SNP: L | SNP: C | INDEL: HC | INDEL: L | INDEL: C |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -121,6 +125,8 @@ GIAB v5.0q. The truth set holds 28,123 SVs after splitting multi-allelic records
   call an insertion that the graph does not contain.
 
 **By SV type and size (genome-wide, v5.0q)**
+
+![SV F1 by type and size, full graph versus personalized graph](figures/sv-f1-by-size.svg)
 
 | Type | Size | Truth SVs | A: recall | A: precision | A: F1 | C: recall | C: precision | C: F1 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -175,6 +181,8 @@ refine results above.
 | Outside repeats | **`.nonrep` (C)** | 0.857 | 0.974 | **0.912** |
 | Outside repeats | `.nonrep` (C') | 0.865 | 0.959 | 0.910 |
 
+![SV precision and recall of Manta and the graph, genome-wide and outside repeats](figures/sv-precision-recall.svg)
+
 Manta is precise but finds only 17% of HG002's SVs. The graph recovers 3.7 times
 as many genome-wide. Outside repeats, the `.nonrep` output beats Manta on
 precision as well as recall.
@@ -210,6 +218,8 @@ On the Slurm path, lanes map in parallel across nodes. With
 `--variant parabricks`, the calling stage moves DeepVariant to GPUs.
 
 ## How the evaluation was done
+
+The figures are drawn from the tables above by `docs/figures/make_figures.py`.
 
 | Item | Detail |
 | --- | --- |
