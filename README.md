@@ -175,6 +175,10 @@ missing keys and paths early.
 <prefix>.pack                              sample-wide read support (only when keep_pack=true)
 ```
 
+`docs/FILES.md` describes each of these files, the layout of the Slurm and
+`run-cram-personalized.sh` work directories, and when the intermediate files
+are removed.
+
 ## Preparing a graph
 
 ```bash

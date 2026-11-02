@@ -405,6 +405,9 @@ NA18945.sv.vcf.gz, .sv.chrX_female/.sv.chrX_male/.sv.chrY.vcf.gz (+.tbi)   call_
 NA18945.sv*.nonrep.vcf.gz (+.tbi)       sv_exclude_bed を渡したとき（反復配列の外の単純な DEL/INS）
 ```
 
+各ファイルの中身（SV VCF の項目、性染色体の扱いなど）と作業ディレクトリの構成は
+`docs/FILES.md` にまとめてあります。
+
 中間ファイルは、読む段階が成功した時点で自動的に消えます（`--keep-intermediates` で残せます）。
 30x 前後の全ゲノムでの大きさと消える時期は次のとおりです。
 
