@@ -90,6 +90,9 @@
 #                        options, or after a failed or cancelled calling job)
 #   --from dv            parabricks only: resubmit just the GPU job 3c, reusing
 #                        the BAM job 3a left in DIR/out (and leaving 3b's SVs)
+#   --from markdup       parabricks only: resubmit job 3a and the 3c that reads
+#                        its BAM, keeping 3b's SVs (when only 3a failed)
+#   --from sv            parabricks only: resubmit just job 3b (when only it failed)
 #   --keep-intermediates keep every intermediate file. By default each one is
 #                        removed once the jobs that read it have succeeded: the
 #                        FASTQs decoded from a CRAM/BAM when stage 3 starts, the
@@ -381,26 +384,38 @@ EOF
 cat > "$W/submit-call.sh" <<'EOF'
 #!/usr/bin/env bash
 source "__W__/env.sh"
+# $1: job to wait for (none: start at once). $2 (split stage 3 only): which
+# jobs to submit -- all (default), dv (call only), sv (sv only), markdup
+# (markdup and the call that reads its BAM).
 DEP=""
 [ -n "${1:-}" ] && DEP="--dependency=afterok:$1 --kill-on-invalid-dep=yes"
-if [ "$SPLIT" = 1 ] && [ "${2:-}" != dv ]; then
+WHAT=${2:-all}
+[ "$WHAT" = call ] && WHAT=all
+MARKDUP_JOB="" SV_JOB="" CALL_JOB=""
+if [ "$SPLIT" = 1 ] && { [ "$WHAT" = all ] || [ "$WHAT" = markdup ]; }; then
     MARKDUP_JOB=$(sbatch --parsable $PART_OPT $MARKDUP_SBATCH --job-name="$JOBNAME-markdup" $DEP \
         --output="$W/logs/markdup.%j.out" --error="$W/logs/markdup.%j.err" "$W/3-markdup.sh")
     record markdup "$MARKDUP_JOB"
+    echo "submitted markdup job $MARKDUP_JOB"
+fi
+if [ "$SPLIT" = 1 ] && { [ "$WHAT" = all ] || [ "$WHAT" = sv ]; }; then
     SV_JOB=$(sbatch --parsable $PART_OPT $SV_SBATCH --job-name="$JOBNAME-sv" $DEP \
         --output="$W/logs/sv.%j.out" --error="$W/logs/sv.%j.err" "$W/3-sv.sh")
     record sv "$SV_JOB"
-    echo "submitted markdup job $MARKDUP_JOB and sv job $SV_JOB"
-    DEP="--dependency=afterok:$MARKDUP_JOB --kill-on-invalid-dep=yes"
+    echo "submitted sv job $SV_JOB"
 fi
-CALL_JOB=$(sbatch --parsable $PART_OPT $CALL_SBATCH --job-name="$JOBNAME-call" $DEP \
-    --output="$W/logs/call.%j.out" --error="$W/logs/call.%j.err" "$W/3-call.sh")
-record call "$CALL_JOB"
-echo "submitted call job $CALL_JOB"
+if [ "$WHAT" != sv ]; then
+    [ -n "$MARKDUP_JOB" ] && DEP="--dependency=afterok:$MARKDUP_JOB --kill-on-invalid-dep=yes"
+    CALL_JOB=$(sbatch --parsable $PART_OPT $CALL_SBATCH --job-name="$JOBNAME-call" $DEP \
+        --output="$W/logs/call.%j.out" --error="$W/logs/call.%j.err" "$W/3-call.sh")
+    record call "$CALL_JOB"
+    echo "submitted call job $CALL_JOB"
+fi
 if [ "$SPLIT" = 1 ] && [ "$CLEANUP" = 1 ]; then
-    # the last of the split jobs to finish clears the scratch and the given paths
+    # after the last of the split jobs submitted here: the scratch and the given paths
+    AFTER=$(echo $CALL_JOB $SV_JOB | tr ' ' ':')
     CLEAN_JOB=$(sbatch --parsable $PART_OPT -c 1 --mem=1G --job-name="$JOBNAME-cleanup" \
-        --dependency="afterok:$CALL_JOB${SV_JOB:+:$SV_JOB}" --kill-on-invalid-dep=yes \
+        --dependency="afterok:$AFTER" --kill-on-invalid-dep=yes \
         --output="$W/logs/cleanup.%j.out" --error="$W/logs/cleanup.%j.err" "$W/3-cleanup.sh")
     record cleanup "$CLEAN_JOB"
 fi
@@ -499,38 +514,54 @@ chmod +x "$W/1-prepare.sh" "$W/2-lane.sh" "$W/3-markdup.sh" "$W/3-sv.sh" "$W/3-c
 NAME="pggl-$PREFIX"
 case "$FROM" in
     "") ;;
-    call|dv)
-        # Every lane must have finished; stage 3 reads their out.json files.
+    call|dv|sv|markdup)
+        [ "$FROM" = call ] || [ "$SPLIT" = 1 ] || die "--from $FROM applies to --variant parabricks only"
+        # Every lane must have finished; stage 3 reads their out.json files, and
+        # the parts being rerun need the lane files the earlier ones have not
+        # removed yet (BAMs for markdup, GAMs for sv).
+        case "$FROM" in
+            call) NEED="namecol_bam pack_gam" ;;
+            markdup) NEED="namecol_bam" ;;
+            sv) NEED="pack_gam" ;;
+            dv) NEED="" ;;
+        esac
         [ -d "$W/lanes" ] && ls "$W"/lanes/*/job.json >/dev/null 2>&1 \
             || die "--from $FROM: no lanes in $W (run the full pipeline first)"
         for j in "$W"/lanes/*/job.json; do
-            [ -s "$(dirname "$j")/out.json" ] || die "--from $FROM: lane $(basename "$(dirname "$j")") has no out.json"
-            if [ "$FROM" = call ] && ! python3 -c 'import json,os,sys
+            o="$(dirname "$j")/out.json"
+            [ -s "$o" ] || die "--from $FROM: lane $(basename "$(dirname "$j")") has no out.json"
+            if [ -n "$NEED" ] && ! python3 -c 'import json,os,sys
 o = json.load(open(sys.argv[1]))
-sys.exit(any(isinstance(v, dict) and v.get("class") == "File" and not os.path.exists(v["path"]) for v in o.values()))' "$(dirname "$j")/out.json"; then
-                die "--from call: lane $(basename "$(dirname "$j")")'s BAM/GAM were removed after the steps that read them succeeded; rerun the lanes (no --from), or use --from dv"
+sys.exit(any(isinstance(o.get(k), dict) and not os.path.exists(o[k]["path"]) for k in sys.argv[2:]))' "$o" $NEED; then
+                die "--from $FROM: lane $(basename "$(dirname "$j")")'s files ($NEED) were removed once the step reading them succeeded; resume only the part that failed (--from markdup, --from sv or --from dv), or rerun the lanes"
             fi
         done
         if [ "$FROM" = dv ]; then
-            [ "$SPLIT" = 1 ] || die "--from dv applies to --variant parabricks only"
-            [ -s "$W/out-markdup.json" ] || die "--from dv: no $W/out-markdup.json (the markdup job has not finished; use --from call)"
+            [ -s "$W/out-markdup.json" ] || die "--from dv: no $W/out-markdup.json (the markdup job has not succeeded; use --from markdup)"
         fi
         if [ "$DRY_RUN" = 1 ]; then
             echo "dry run: stage 3 scripts rewritten in $W, not submitted"
             exit 0
         fi
-        rm -rf "$W/out.json" "$W/tmp/call" "$W/tmp-out/call"
-        if [ "$FROM" = call ]; then
-            rm -rf "$W/out" "$W/out-markdup.json" "$W/out-sv.json" "$W/tmp/markdup" "$W/tmp-out/markdup" "$W/tmp/sv" "$W/tmp-out/sv"
-        else
-            # keep 3a's and 3b's outputs, drop only what 3c writes
-            rm -f "$W/out/"*.g.vcf.gz "$W/out/"*.g.vcf.gz.tbi
-        fi
+        case "$FROM" in
+            call)
+                rm -rf "$W/out" "$W/out.json" "$W/out-markdup.json" "$W/out-sv.json" \
+                    "$W"/tmp/{call,markdup,sv} "$W"/tmp-out/{call,markdup,sv} ;;
+            dv)       # keep the markdup and sv outputs, drop what the call job writes
+                rm -rf "$W/out.json" "$W/tmp/call" "$W/tmp-out/call"
+                rm -f "$W/out/"*.g.vcf.gz "$W/out/"*.g.vcf.gz.tbi ;;
+            markdup)  # its BAM feeds the call job, so both are redone
+                rm -rf "$W/out.json" "$W/out-markdup.json" "$W"/tmp/{call,markdup} "$W"/tmp-out/{call,markdup}
+                rm -f "$W/out/"*.g.vcf.gz "$W/out/"*.g.vcf.gz.tbi "$W/out/"*.bam "$W/out/"*.bam.bai "$W/out/"*.markdup.metrics ;;
+            sv)
+                rm -rf "$W/out-sv.json" "$W/tmp/sv" "$W/tmp-out/sv"
+                rm -f "$W/out/"*.sv*.vcf.gz "$W/out/"*.sv*.vcf.gz.tbi "$W/out/"*.pack ;;
+        esac
         bash "$W/submit-call.sh" "" "$FROM"
         echo "over the $(ls -d "$W"/lanes/*/ | wc -l) lanes in $W"
         exit 0
         ;;
-    *) die "--from takes: call, dv" ;;
+    *) die "--from takes: call, markdup, sv, dv" ;;
 esac
 if [ "$DRY_RUN" = 1 ]; then
     echo "dry run: stage scripts written to $W (run $W/1-prepare.sh by hand to test stage 1)"

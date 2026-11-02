@@ -58,6 +58,9 @@
 #   --from STEP          sample or submit: start there, reusing what an earlier
 #                        run left in DIR
 #   --dry-run            write the jobs and scripts, submit nothing
+#   --status             with --workdir only: report which steps of an earlier
+#                        run in DIR succeeded, the state of its Slurm jobs, and
+#                        how to resume it
 set -euo pipefail
 
 die() { echo "run-cram-personalized.sh: $*" >&2; exit 1; }
@@ -92,10 +95,79 @@ while [ $# -gt 0 ]; do
         --sbatch) EXTRA=$2; shift 2 ;;
         --from) FROM=$2; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
+        --status) STATUS=1; shift ;;
         -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
         *) die "unknown option $1 (see --help)" ;;
     esac
 done
+
+# --status: each step writes its marker only when it succeeds, so the markers
+# say how far the run got; the jobs.tsv files give the Slurm states.
+if [ "${STATUS:-0}" = 1 ]; then
+    [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ] || die "--status needs the --workdir of an earlier run"
+    W=$(cd "$WORKDIR" && pwd)
+    have() { [ -s "$1" ]; }
+    mark() { if [ "$1" = 1 ]; then printf '  OK  %s\n' "$2"; else printf '  --  %s\n' "$2"; fi; }
+    nl=$(ls -d "$W"/run/lanes/*/ 2>/dev/null | wc -l)
+    nd=$(ls "$W"/run/lanes/*/out.json 2>/dev/null | wc -l)
+    s_prep=0; s_sample=0; s_submit=0; s_lanes=0; s_md=0; s_sv=0; s_call=0
+    have "$W/prep/prepare.out.json" && s_prep=1
+    have "$W/run/jobs.tsv" && s_submit=1
+    [ "$nl" -gt 0 ] && [ "$nl" = "$nd" ] && s_lanes=1
+    have "$W/run/out-markdup.json" && s_md=1
+    have "$W/run/out-sv.json" && s_sv=1
+    have "$W/run/out.json" && s_call=1
+    # the graph is removed once everything succeeded, so later steps imply it
+    { have "$W/pgraph/out.json" || [ "$s_submit" = 1 ]; } && s_sample=1
+    echo "run in $W:"
+    mark $s_prep   "1. prepare  (CRAM -> FASTQ)"
+    mark $s_sample "2. sample   (personalized graph)"
+    mark $s_submit "3. submit   (mapping and calling submitted)"
+    mark $s_lanes  "   lanes    ($nd/$nl mapped)"
+    mark $s_md     "   markdup"
+    mark $s_sv     "   sv"
+    mark $s_call   "   call     (DeepVariant)"
+    if command -v sacct >/dev/null; then
+        ids=$(cut -f2 "$W/jobs.tsv" "$W/run/jobs.tsv" 2>/dev/null | paste -sd, -)
+        if [ -n "$ids" ]; then
+            echo "Slurm jobs:"
+            sacct -j "$ids" -X -n -o JobID%14,JobName%28,State%12,Elapsed 2>/dev/null | sed 's/^/  /'
+            if sacct -j "$ids" -X -n -o State 2>/dev/null | grep -qE 'PENDING|RUNNING|REQUEUED|SUSPENDED'; then
+                echo "some jobs are still pending or running: wait for them (or scancel them) before resuming"
+                exit 0
+            fi
+        fi
+    fi
+    cmd=$(sed -n '/submit-slurm.sh/,$p' "$W/3-submit.sh" 2>/dev/null | sed 's/\\$//' | tr -s ' \n' ' ' | sed "s#\\\$W#$W#g")
+    echo "next:"
+    if [ "$s_md" = 1 ] && [ "$s_sv" = 1 ] && [ "$s_call" = 1 ]; then
+        echo "  nothing to resume: the outputs are in $W/run/out/"
+    elif [ "$s_md" = 1 ] || [ "$s_sv" = 1 ]; then
+        # one of the calling jobs succeeded and removed the lane files it read,
+        # so resume only the parts that did not
+        [ "$s_md" = 1 ] && [ "$s_call" = 0 ] && echo "  DeepVariant:    $cmd --from dv"
+        [ "$s_md" = 0 ] && echo "  markdup + call: $cmd --from markdup"
+        [ "$s_sv" = 0 ] && echo "  graph SVs:      $cmd --from sv"
+        if [ "$s_sv" = 0 ] && { [ "$s_md" = 0 ] || [ "$s_call" = 0 ]; }; then
+            # each resubmission ends with a cleanup job that clears the scratch
+            # and the graph, so a second one running alongside would lose them
+            echo "  submit these one at a time: the second only after the first has finished"
+        fi
+    elif [ "$s_lanes" = 1 ]; then
+        echo "  the calling stage over the mapped lanes:"
+        echo "    $cmd --from call"
+    elif [ "$s_sample" = 1 ] && [ -d "$W/prep/prepare-out" ]; then
+        echo "  rerun this script with the same options plus --from submit"
+    elif [ "$s_sample" = 1 ]; then
+        echo "  the decoded FASTQs are gone, so the lanes cannot be remapped: rerun from the start"
+    elif [ "$s_prep" = 1 ]; then
+        echo "  rerun this script with the same options plus --from sample"
+    else
+        echo "  rerun this script with the same options (no --from)"
+    fi
+    echo "logs: $W/logs/ (steps 1-3) and $W/run/logs/ (lanes, markdup, sv, call)"
+    exit 0
+fi
 
 [ -n "$PREFIX" ] && [ -n "$WORKDIR" ] && [ -n "$PARTITION" ] || die "--prefix, --workdir and --partition are required"
 [ -n "$DATA_ROOT" ] || die "give --data-root or set PGGL_DATA"

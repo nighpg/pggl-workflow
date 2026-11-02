@@ -482,7 +482,8 @@ call ジョブは autosome・PAR・chrX（女性／男性）・chrY の 5 回の
 それぞれ `num_gpus` 枚の GPU で実行します。
 
 call だけが失敗したときは、`--from dv` で GPU のジョブだけを投入し直せます
-（markdup の BAM と sv の結果はそのまま使います）。
+（markdup の BAM と sv の結果はそのまま使います）。sv だけが失敗したときは `--from sv`、
+markdup だけが失敗したときは `--from markdup`（markdup と、その BAM を読む call）です。
 
 **実データで投入する。** job ファイルに `"num_gpus": <N>` を加え、次のように投入します。
 
@@ -544,8 +545,27 @@ scripts/run-cram-personalized.sh \
 - グラフは既定で `examples/graphs/combined.json` です。`--preset` で変えられます。
 - 繰り返し配列の BED（`interval_files/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz`）
   を持ち込んでおいてください。プリセットがこれを `sv_exclude_bed` に使います。
-- 途中で止まったときは、`--from sample`（サンプリングから）か `--from submit`（本解析の
-  投入から）で、作業ディレクトリに残った結果を使ってやり直せます。
+- 途中で止まったときは、まず `--status` で状況を確かめます。各段階が成功したか、Slurm の
+  ジョブの状態、次に実行する再開のコマンドが表示されます。
+
+  ```bash
+  scripts/run-cram-personalized.sh --status --workdir /shared/…/runs/SAMPLE
+  ```
+
+  再開のしかたは、止まった場所で決まります（`--status` が該当するものを表示します）。
+
+  | 止まった場所 | 再開 |
+  | --- | --- |
+  | prepare | 同じオプションで最初から |
+  | sample | 同じオプションに `--from sample` |
+  | 投入・レーン（FASTQ が残っている間） | 同じオプションに `--from submit` |
+  | markdup と sv の両方 | `submit-slurm.sh … --from call` |
+  | markdup だけ | `submit-slurm.sh … --from markdup`（markdup と、その BAM を読む call） |
+  | sv だけ | `submit-slurm.sh … --from sv` |
+  | call（DeepVariant）だけ | `submit-slurm.sh … --from dv` |
+
+  `submit-slurm.sh` の部分は、最初の実行で `<workdir>/3-submit.sh` に書かれたコマンドです。
+  2 つ投入し直す必要があるときは、1 つが終わってから次を投入します。
 - `--dry-run` をつけると、投入せずにジョブとスクリプトだけを書き出します。
 - 中間ファイルは段階ごとに消えます。k-mer の集計（`*.kff`、約 25 GB）は sample の直後、
   CRAM から戻した FASTQ は全レーンのマップ後、personalized グラフ（約 45 GB）は最後まで

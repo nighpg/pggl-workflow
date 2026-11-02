@@ -439,7 +439,9 @@ job (`parts/call-sv.cwl`: vg pack, vg call, `.nonrep`) start side by side in
 (`parts/call-dv-parabricks.cwl`: the five DeepVariant calls) starts as soon as
 the markdup BAM exists, with `--call-sbatch`, which is where the GPU partition
 and `--gres` go. `--from dv` resubmits only the GPU job, reusing the BAM in
-`out/`. `parts/call-parabricks.cwl` chains the same three parts for
+`out/`; `--from sv` only the sv job; `--from markdup` the markdup job and the
+call job that reads its BAM. Each removes its lane inputs on success, so after
+a partial failure resume only the parts that failed. `parts/call-parabricks.cwl` chains the same three parts for
 single-node runs.
 
 pbrun spreads one interval over all the GPUs it is given, so the Parabricks
@@ -872,7 +874,8 @@ scripts/run-cram-personalized.sh --cram SAMPLE.cram --cram-ref GRCh38_full.fa \
   --prefix SAMPLE --workdir /shared/work/SAMPLE --data-root /path/to/graphs \
   --partition cpu --variant parabricks --gpu-partition gpu --gpus 2
 # --variant cpu runs DeepVariant on CPU; --preset picks the graph (default combined);
-# --from sample|submit resumes; --dry-run writes the jobs without submitting
+# --from sample|submit resumes; --dry-run writes the jobs without submitting;
+# --status --workdir DIR reports how far a run got and the command to resume it
 ```
 
 **Once per graph** (reusable for every sample):
