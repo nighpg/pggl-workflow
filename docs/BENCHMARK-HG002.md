@@ -18,6 +18,10 @@ graph tested here, so it is an unbiased test sample.
   reached precision 0.979 and recall 0.862.
 - The 738-haplotype combined graph (C') matched C on small variants and on SVs
   outside repeats, but was worse on SVs inside tandem repeats.
+- In GIAB's challenging medically relevant genes (CMRG), the workflow missed
+  57% fewer small variants than BWA + DeepVariant. Twelve genes rose from below
+  to above 0.9 recall, among them RHCE (0.12 → 0.94), KCNE1 (0.13 → 0.93),
+  NCF1, TYMS and GP6. SV recall in these genes rose from 0.25 with Manta to 0.76.
 - Calling with NVIDIA Parabricks on four GPUs took 7.5 minutes for all five
   DeepVariant calls. The SVs were identical to C, and SNP accuracy was the same.
   INDEL F1 on v5.0q was 0.0017 lower (0.9566 against 0.9583), almost entirely in
@@ -244,6 +248,105 @@ On the GPU, DeepVariant shrinks from most of the calling stage (5 h 19 min for
 duplicate marking, DeepVariant and SVs on one 128-core node in setup C) to a few
 minutes, so mapping sets the run time.
 
+## Challenging medically relevant genes (CMRG)
+
+GIAB's CMRG v1.00 benchmark covers 273 genes that are medically relevant and
+hard to call from short reads, often because of paralogs, pseudogenes or errors
+in GRCh38. It holds 27,939 small variants and 250 SVs for HG002, all on the
+autosomes. Each setup was scored against it as above: hap.py for small variants,
+and truvari for SVs. The per-gene counts are in
+[`figures/cmrg-per-gene.tsv`](figures/cmrg-per-gene.tsv).
+
+| Metric (CMRG benchmark regions) | BWA + HC / Manta | L (BWA + DeepVariant) | **C (workflow)** |
+| --- | --- | --- | --- |
+| SNP F1 | 0.954 | 0.977 | **0.990** |
+| INDEL F1 | 0.931 | 0.955 | **0.963** |
+| Small variants missed (FN) | 1,071 | 889 | **384** |
+| False small-variant calls (FP) | 1,042 | 237 | **236** |
+| Genes with recall ≥ 0.95 (of 240 with ≥ 5 variants) | 188 | 195 | **210** |
+| SV recall / precision / F1 | 0.250 / 0.946 / 0.396 (Manta) | — | **0.759 / 0.881 / 0.815** |
+
+C-PB (Parabricks) matched C: 371 missed small variants, SNP F1 0.990. Manta is
+scored by position and length only. With that rule the graph's SV F1 is 0.768.
+
+![Per-gene recall, BWA + DeepVariant against the workflow, in the CMRG genes](figures/cmrg-gene-recall.svg)
+
+**Genes that become callable.** These twelve genes had a small-variant recall
+below 0.9 with L and at least 0.9 with the workflow:
+
+| Gene | Truth variants | Recall: HC / L / C | Associated with |
+| --- | --- | --- | --- |
+| RHCE | 148 | 0.12 / 0.12 / 0.94 | Rh blood group (RHD paralog); transfusion, haemolytic disease of the newborn |
+| KCNE1 | 104 | 0.12 / 0.13 / 0.93 | Long QT syndrome 5, Jervell and Lange-Nielsen syndrome |
+| DNMT3L | 32 | 0.62 / 0.62 / 0.94 | |
+| RGPD3 | 91 | 0.73 / 0.68 / 0.93 | |
+| PPIP5K1 | 66 | 0.73 / 0.73 / 0.94 | |
+| SPRN | 11 | 0.73 / 0.73 / 1.00 | |
+| NCF1 | 30 | 0.63 / 0.77 / 0.90 | Chronic granulomatous disease (pseudogenes NCF1B/C) |
+| GTF2I | 106 | 0.78 / 0.81 / 0.92 | Williams-Beuren syndrome region (7q11.23) |
+| BSG | 75 | 0.80 / 0.87 / 0.93 | |
+| FCGR3A | 8 | 0.88 / 0.88 / 1.00 | Fc gamma receptor (antibody therapy, autoimmunity) |
+| TYMS | 98 | 0.87 / 0.89 / 1.00 | Fluoropyrimidine pharmacogenomics |
+| GP6 | 113 | 0.84 / 0.89 / 1.00 | Platelet glycoprotein VI deficiency |
+
+**Improved, but still below 0.9.**
+- CBS (homocystinuria): 0.00 → 0.65.
+- CRYAA (congenital cataract): 0.00 → 0.67.
+- SMN1 (spinal muscular atrophy): 0.20 → 0.67.
+- GTF2IRD2: 0.45 → 0.87.
+- SIGLEC16: 0.48 → 0.88.
+- FCGR2B: 0.60 → 0.88.
+
+Missed variants also fell sharply in several other clinically relevant genes.
+The counts below are FN for HC / L / C:
+- HYDIN (primary ciliary dyskinesia): 24 / 18 / 6
+- TPO (congenital hypothyroidism): 21 / 8 / 3
+- MUSK (congenital myasthenic syndrome): 22 / 20 / 6
+- DOK7 (congenital myasthenic syndrome): 8 / 9 / 2
+
+**SVs.** Of the 117 CMRG genes with SVs, Manta found every SV in 23 and the
+graph in 82. The graph found SVs that Manta missed in 74 genes. Among them:
+
+| Gene | SVs found: Manta → graph | Associated with |
+| --- | --- | --- |
+| ANKRD11 | 0 → 7 of 7 | KBG syndrome |
+| PKD1 | 0 → 1 (2.3 kb insertion) | Autosomal dominant polycystic kidney disease |
+| RNF213 | 0 → 2 of 3 | Moyamoya disease |
+| FXN | 1 → 2 | Friedreich ataxia |
+| STK11 | 1 → 2 | Peutz-Jeghers syndrome |
+| GPI | 0 → 2 (17 kb insertion) | Glucose-6-phosphate isomerase deficiency |
+| STXBP2 | 0 → 1 | Familial haemophagocytic lymphohistiocytosis 5 |
+| ETHE1 | 0 → 2 | Ethylmalonic encephalopathy |
+| PDE6B | 0 → 1 | Retinitis pigmentosa |
+
+Only one gene, TCF3, had an SV that Manta found and the graph missed.
+
+**Caveats**
+
+- **False duplications in GRCh38:** KCNE1, CBS and CRYAA lie in regions that
+  GRCh38 falsely duplicates. GIAB's stratification `CMRGv1.00_falselyduplicatedgenes`
+  lists exactly these three. With the linear reference, reads split between the
+  two copies. GIAB's GRCh38 with these copies masked would let a linear pipeline
+  recover them too, so their gain reflects the reference error, not the graph
+  as such.
+- **SMN1:** recall rose but the false calls went from 0 to 12, most likely from
+  confusing SMN1 with SMN2. SMA is diagnosed from copy number, which needs a
+  dedicated caller, not these variant calls.
+- **Genes that got worse:**
+  - COL6A1 stayed at recall 0.67, and its false calls rose from 5 to 9.
+  - PDPK1 and SH2B1 lost recall.
+  - HNF1A (MODY3) gained 2 missed variants.
+  - MAFA, MARVELD2 and NLRP12 dropped slightly.
+  - In ANKRD11 the small-variant false calls rose from 8 to 15, although its SVs
+    improved.
+- **Scope:**
+  - This is one sample.
+  - Many genes hold few variants.
+  - CMRG scores only its benchmark regions, not whole genes.
+  - JaSaPaGe was built from Japanese assemblies and HG002 is of Ashkenazi descent.
+- **Gene associations:** the associations in the tables are given for orientation.
+  Check them in OMIM or ClinGen before clinical use.
+
 ## The combined graph and the number of candidates
 
 The combined graph (738 haplotypes) is used through a personalized graph:
@@ -288,6 +391,7 @@ The figures are drawn from the tables above by `docs/figures/make_figures.py`.
 | SV tool | truvari 5.5.0 `bench --refine --pick ac --passonly -r 2000 -C 5000`, after `bcftools norm -m -any` and with `SVLEN` / `SVTYPE` / `SVSIM` removed; position-and-length rule `--pctseq 0 --dup-to-ins` |
 | Repeat SVs | `truvari bench --sizemin 5 --pick ac`, then `truvari refine --use-original-vcfs` |
 | Call-level agreement | PASS calls with an ALT genotype, multi-allelic records split and `<*>` dropped, compared with `bcftools isec -c none` |
+| CMRG | GIAB CMRG v1.00 small variants (hap.py, CMRG benchmark BED) and SVs (truvari `--refine`; Manta and the graph also with `--pctseq 0 --dup-to-ins`); genes from `GRCh38_CMRG_benchmark_gene_coordinates.bed` |
 
 **Caveats**
 

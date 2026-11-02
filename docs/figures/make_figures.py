@@ -21,11 +21,12 @@ plt.rcParams.update({
     "font.family": "DejaVu Sans", "font.size": 10, "axes.spines.top": False,
     "axes.spines.right": False, "axes.edgecolor": "#bdc1c6", "axes.labelcolor": "#3c4043",
     "xtick.color": "#3c4043", "ytick.color": "#3c4043", "svg.fonttype": "none",
+    "svg.hashsalt": "pggl-workflow",
 })
 
 
 def save(fig, name):
-    fig.savefig(os.path.join(OUT, name), bbox_inches="tight")
+    fig.savefig(os.path.join(OUT, name), bbox_inches="tight", metadata={"Date": None})
     plt.close(fig)
 
 
@@ -145,4 +146,40 @@ fig.suptitle("Sampling the sample's haplotypes raises SV F1 at every type and si
              x=0.01, ha="left", fontsize=12, fontweight="bold", y=1.03)
 fig.text(0.01, 0.94, "HG002 SVs against GIAB v5.0q, truvari bench --refine", color=DARK, fontsize=9.5)
 save(fig, "sv-f1-by-size.svg")
+# 5. CMRG genes: per-gene recall, BWA + DeepVariant (L) against the workflow (C)
+genes = []
+with open(os.path.join(OUT, "cmrg-per-gene.tsv")) as fh:
+    head = fh.readline().rstrip("\n").split("\t")
+    for line in fh:
+        r = dict(zip(head, line.rstrip("\n").split("\t")))
+        t = int(r["truth"])
+        if t >= 5:
+            genes.append((r["gene"], t, int(r["L_TP"]) / t, int(r["C_TP"]) / t))
+fig, ax = plt.subplots(figsize=(6.4, 6.0))
+ax.fill_between([0, 0.9], 0.9, 1.02, color="#e8f0fe", zorder=0)
+ax.plot([0, 1.02], [0, 1.02], color="#dadce0", lw=1, zorder=1)
+labelled = {"RHCE": (-0.1, 0.03), "KCNE1": (0.03, -0.045), "CBS": (0.03, 0.0), "CRYAA": (0.03, 0.02),
+            "SMN1": (0.03, -0.02), "NCF1": (-0.12, 0.03), "GTF2IRD2": (0.03, -0.035),
+            "SIGLEC16": (0.03, -0.01), "DNMT3L": (-0.15, 0.025), "COL6A1": (0.03, -0.03)}
+for g, t, rl, rc in genes:
+    gained = rl < 0.9 <= rc
+    ax.scatter([rl], [rc], s=12 + t / 8, color=ACCENT if gained else GREY,
+               alpha=0.9 if gained else 0.55, edgecolors="none", zorder=2)
+    if g in labelled:
+        dx, dy = labelled[g]
+        ax.annotate(g, (rl, rc), (rl + dx, rc + dy), fontsize=8.5, color="#3c4043")
+ax.text(0.19, 0.91, "recall < 0.9 with L,\n≥ 0.9 with the workflow", fontsize=8, color=ACCENT, ha="left",
+        va="bottom")
+ax.set_xlim(-0.02, 1.02)
+ax.set_ylim(-0.02, 1.02)
+ax.set_xlabel("Recall, BWA + DeepVariant (L)")
+ax.set_ylabel("Recall, workflow (C)")
+fig.subplots_adjust(top=0.84)
+fig.suptitle("12 medically relevant genes cross recall 0.9 only with the graph;\n"
+             "RHCE and KCNE1 go from 0.12 to 0.93", x=0.01, y=0.99, ha="left", fontsize=11.5,
+             fontweight="bold")
+fig.text(0.01, 0.875, "Per-gene small-variant recall on GIAB CMRG v1.00, genes with ≥ 5 truth "
+         "variants; point size = variants", color=DARK, fontsize=8.5)
+save(fig, "cmrg-gene-recall.svg")
+
 print("wrote", ", ".join(sorted(f for f in os.listdir(OUT) if f.endswith(".svg"))))
