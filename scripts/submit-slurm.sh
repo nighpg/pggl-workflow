@@ -255,7 +255,12 @@ for t in sorted(tops):
 PY
 )
 BIND_ARGS=""
+declare -A BOUND=()
 for b in "${AUTO_BINDS[@]}" "${BINDS[@]+"${BINDS[@]}"}" /tmp ${LOCAL_INDEX:+"$LOCAL_INDEX"}; do
+    b=${b%/}; b=${b:-/}
+    # a duplicate --bind makes apptainer fail when it sets up the mount
+    [ -z "${BOUND[$b]:-}" ] || continue
+    BOUND[$b]=1
     BIND_ARGS+=" --bind $b"
 done
 GPU_ARG=""
