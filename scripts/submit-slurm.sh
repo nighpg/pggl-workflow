@@ -349,7 +349,8 @@ run_part() {
     # --cleanenv would also drop the GPUs Slurm assigned to the job
     local gpu_env=""
     [ -n "$GPU_ARG" ] && [ -n "\${CUDA_VISIBLE_DEVICES:-}" ] && gpu_env="--env CUDA_VISIBLE_DEVICES=\$CUDA_VISIBLE_DEVICES"
-    "\$APPTAINER" exec --cleanenv$GPU_ARG \$gpu_env$BIND_ARGS "\$SIF" \\
+    # the image's own packages must win over ~/.local, which apptainer mounts
+    "\$APPTAINER" exec --cleanenv --env PYTHONNOUSERSITE=1$GPU_ARG \$gpu_env$BIND_ARGS "\$SIF" \\
         cwltool --no-container --timestamps $CWL_GPU_OPTS \\
             --tmpdir-prefix "\$W/tmp/\$name/" --tmp-outdir-prefix "\$W/tmp-out/\$name/" \\
             "\$@" "\$part" "\$job" > "\$out.partial"

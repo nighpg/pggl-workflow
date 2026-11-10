@@ -278,7 +278,7 @@ PY
 )
 rm -rf "\$W/tmp/sample" "\$W/tmp-out/sample"
 mkdir -p "\$W/pgraph" "\$W/tmp/sample" "\$W/tmp-out/sample"
-"$APPTAINER" exec --cleanenv \$BINDS --bind /tmp "$SIF" \\
+"$APPTAINER" exec --cleanenv --env PYTHONNOUSERSITE=1 \$BINDS --bind /tmp "$SIF" \\
     cwltool --no-container --timestamps --outdir "\$W/pgraph" \\
         --tmpdir-prefix "\$W/tmp/sample/" --tmp-outdir-prefix "\$W/tmp-out/sample/" \\
         "$REPO/Workflows/haplotype-sample.cwl" "\$W/hs.json" > "\$W/pgraph/out.json"

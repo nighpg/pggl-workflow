@@ -275,7 +275,7 @@ if [ -z "$(ls -A sif-stage/wheels)" ]; then
         APPTAINER="$(apptainer_bin)"
         if [ -n "${APPTAINER}" ] && [ -s image/deepvariant-opencode-cpu.sif ]; then
             echo "    resolving inside the base image (its own python 3.10)"
-            "${APPTAINER}" exec --cleanenv --bind "${PWD}:/repo" \
+            "${APPTAINER}" exec --cleanenv --env PYTHONNOUSERSITE=1 --bind "${PWD}:/repo" \
                 image/deepvariant-opencode-cpu.sif \
                 python3 -m pip download --dest /repo/sif-stage/wheels \
                     --only-binary=:all: "cwltool==${CWLTOOL_VERSION}"
