@@ -165,6 +165,8 @@ missing keys and paths early.
 <prefix>.chrX_female.g.vcf.gz    (+ .tbi)  diploid
 <prefix>.chrX_male.g.vcf.gz      (+ .tbi)  haploid (--haploid-contigs chrX)
 <prefix>.chrY.g.vcf.gz           (+ .tbi)  haploid (--haploid-contigs chrY)
+<prefix>.{autosome,PAR,chrX_female,chrX_male,chrY}.vcf.gz (+ .tbi)
+                                           DeepVariant's plain VCFs of the same five calls (variant sites only)
 <prefix>.<lane>.gam                           per-lane graph-space alignment (only when emit_gam=true)
 <prefix>.sv.vcf.gz               (+ .tbi)  genotyped graph SVs, autosomes + PAR, diploid (only when call_sv=true)
 <prefix>.sv.chrX_female.vcf.gz   (+ .tbi)  diploid   (chrX outside PAR)

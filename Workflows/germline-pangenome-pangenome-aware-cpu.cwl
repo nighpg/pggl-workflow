@@ -248,7 +248,7 @@ steps:
       namecol_bams: align/namecol_bam
       gams: align/gam
       pack_gams: align/pack_gam
-    out: [bam, gam, sv_vcf, sv_vcf_chrX_female, sv_vcf_chrX_male, sv_vcf_chrY, sv_nonrep_vcf, sv_nonrep_vcf_chrX_female, sv_nonrep_vcf_chrX_male, sv_nonrep_vcf_chrY, pack, markdup_metrics, gvcf_autosome, gvcf_PAR, gvcf_chrX_female, gvcf_chrX_male, gvcf_chrY]
+    out: [bam, gam, sv_vcf, sv_vcf_chrX_female, sv_vcf_chrX_male, sv_vcf_chrY, sv_nonrep_vcf, sv_nonrep_vcf_chrX_female, sv_nonrep_vcf_chrX_male, sv_nonrep_vcf_chrY, pack, markdup_metrics, gvcf_autosome, gvcf_PAR, gvcf_chrX_female, gvcf_chrX_male, gvcf_chrY, vcf_autosome, vcf_PAR, vcf_chrX_female, vcf_chrX_male, vcf_chrY]
 
 outputs:
   sv_nonrep_vcf:
@@ -355,5 +355,40 @@ outputs:
     type: File
     doc: Haploid gVCF for chrY
     outputSource: call/gvcf_chrY
+    secondaryFiles:
+      - .tbi
+
+  vcf_autosome:
+    type: File
+    doc: Diploid VCF for autosome regions (reference coordinates), the variant sites of the gVCF
+    outputSource: call/vcf_autosome
+    secondaryFiles:
+      - .tbi
+
+  vcf_PAR:
+    type: File
+    doc: Diploid VCF for PAR regions
+    outputSource: call/vcf_PAR
+    secondaryFiles:
+      - .tbi
+
+  vcf_chrX_female:
+    type: File
+    doc: Diploid VCF for female chrX
+    outputSource: call/vcf_chrX_female
+    secondaryFiles:
+      - .tbi
+
+  vcf_chrX_male:
+    type: File
+    doc: Haploid VCF for male chrX
+    outputSource: call/vcf_chrX_male
+    secondaryFiles:
+      - .tbi
+
+  vcf_chrY:
+    type: File
+    doc: Haploid VCF for chrY
+    outputSource: call/vcf_chrY
     secondaryFiles:
       - .tbi

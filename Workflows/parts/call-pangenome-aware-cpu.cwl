@@ -274,12 +274,23 @@ steps:
     scatterMethod: dotproduct
     out:
       - gvcf
+      - vcf
 
   concat_autosome:
     run: ../../Tools/concat-gvcfs.cwl
     in:
       prefix: prefix
       gvcf: deepvariant_autosome/gvcf
+    out:
+      - out_gvcf
+
+  concat_autosome_vcf:
+    run: ../../Tools/concat-gvcfs.cwl
+    in:
+      prefix: prefix
+      suffix:
+        default: vcf.gz
+      gvcf: deepvariant_autosome/vcf
     out:
       - out_gvcf
 
@@ -298,6 +309,7 @@ steps:
         valueFrom: $(self + ".PAR")
     out:
       - gvcf
+      - vcf
 
   deepvariant_chrX_female:
     run: ../../Tools/pangenome-aware-deepvariant.cwl
@@ -314,6 +326,7 @@ steps:
         valueFrom: $(self + ".chrX_female")
     out:
       - gvcf
+      - vcf
 
   deepvariant_chrX_male:
     run: ../../Tools/pangenome-aware-deepvariant.cwl
@@ -332,6 +345,7 @@ steps:
         valueFrom: $(self + ".chrX_male")
     out:
       - gvcf
+      - vcf
 
   deepvariant_chrY:
     run: ../../Tools/pangenome-aware-deepvariant.cwl
@@ -350,6 +364,7 @@ steps:
         valueFrom: $(self + ".chrY")
     out:
       - gvcf
+      - vcf
 
 outputs:
   sv_nonrep_vcf:
@@ -456,5 +471,40 @@ outputs:
     type: File
     doc: Haploid gVCF for chrY
     outputSource: deepvariant_chrY/gvcf
+    secondaryFiles:
+      - .tbi
+
+  vcf_autosome:
+    type: File
+    doc: Diploid VCF for autosome regions (reference coordinates), the variant sites of the gVCF
+    outputSource: concat_autosome_vcf/out_gvcf
+    secondaryFiles:
+      - .tbi
+
+  vcf_PAR:
+    type: File
+    doc: Diploid VCF for PAR regions
+    outputSource: deepvariant_PAR/vcf
+    secondaryFiles:
+      - .tbi
+
+  vcf_chrX_female:
+    type: File
+    doc: Diploid VCF for female chrX
+    outputSource: deepvariant_chrX_female/vcf
+    secondaryFiles:
+      - .tbi
+
+  vcf_chrX_male:
+    type: File
+    doc: Haploid VCF for male chrX
+    outputSource: deepvariant_chrX_male/vcf
+    secondaryFiles:
+      - .tbi
+
+  vcf_chrY:
+    type: File
+    doc: Haploid VCF for chrY
+    outputSource: deepvariant_chrY/vcf
     secondaryFiles:
       - .tbi

@@ -2,7 +2,7 @@
 
 class: CommandLineTool
 id: concat-gvcfs
-label: bcftools concat (per-chunk autosome gVCFs)
+label: bcftools concat (per-chunk autosome gVCFs or VCFs)
 cwlVersion: v1.1
 
 $namespaces:
@@ -29,20 +29,28 @@ inputs:
     inputBinding:
       position: 1
 
+  suffix:
+    type: string
+    doc: Extension of the inputs and the output, g.vcf.gz (gVCFs) or vcf.gz (the plain VCFs)
+    default: g.vcf.gz
+    inputBinding:
+      position: 2
+      prefix: --suffix
+
   gvcf:
     type:
       type: array
       items: File
-    doc: Per-chunk autosome gVCFs to concatenate, in genomic order
+    doc: Per-chunk autosome gVCFs (or VCFs) to concatenate, in genomic order
     inputBinding:
-      position: 2
+      position: 3
 
 outputs:
   out_gvcf:
     type: File
-    doc: Concatenated, tabix-indexed autosome gVCF
+    doc: Concatenated, tabix-indexed autosome gVCF (or VCF)
     outputBinding:
-      glob: $(inputs.prefix).autosome.g.vcf.gz
+      glob: $(inputs.prefix).autosome.$(inputs.suffix)
     secondaryFiles:
       - pattern: ".tbi"
 
@@ -50,4 +58,4 @@ outputs:
     type: File?
     doc: Tabix index of the concatenated autosome gVCF
     outputBinding:
-      glob: $(inputs.prefix).autosome.g.vcf.gz.tbi
+      glob: $(inputs.prefix).autosome.$(inputs.suffix).tbi

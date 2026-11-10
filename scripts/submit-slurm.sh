@@ -549,10 +549,11 @@ sys.exit(any(isinstance(o.get(k), dict) and not os.path.exists(o[k]["path"]) for
                     "$W"/tmp/{call,markdup,sv} "$W"/tmp-out/{call,markdup,sv} ;;
             dv)       # keep the markdup and sv outputs, drop what the call job writes
                 rm -rf "$W/out.json" "$W/tmp/call" "$W/tmp-out/call"
-                rm -f "$W/out/"*.g.vcf.gz "$W/out/"*.g.vcf.gz.tbi ;;
+                rm -f "$W/out/$PREFIX".{autosome,PAR,chrX_female,chrX_male,chrY}.{g.vcf.gz,vcf.gz}{,.tbi} ;;
             markdup)  # its BAM feeds the call job, so both are redone
                 rm -rf "$W/out.json" "$W/out-markdup.json" "$W"/tmp/{call,markdup} "$W"/tmp-out/{call,markdup}
-                rm -f "$W/out/"*.g.vcf.gz "$W/out/"*.g.vcf.gz.tbi "$W/out/"*.bam "$W/out/"*.bam.bai "$W/out/"*.markdup.metrics ;;
+                rm -f "$W/out/$PREFIX".{autosome,PAR,chrX_female,chrX_male,chrY}.{g.vcf.gz,vcf.gz}{,.tbi} \
+                    "$W/out/"*.bam "$W/out/"*.bam.bai "$W/out/"*.markdup.metrics ;;
             sv)
                 rm -rf "$W/out-sv.json" "$W/tmp/sv" "$W/tmp-out/sv"
                 rm -f "$W/out/"*.sv*.vcf.gz "$W/out/"*.sv*.vcf.gz.tbi "$W/out/"*.pack ;;

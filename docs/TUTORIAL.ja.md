@@ -218,10 +218,10 @@ scripts/submit-slurm.sh \
 W=/shared/…/runs/toy-slurm
 cat $W/jobs.tsv                                   # prepare / lane / call のジョブ ID
 sacct -j $(cut -f2 $W/jobs.tsv | paste -sd,) -X -o JobID%16,State,Elapsed,NodeList
-ls $W/out/                                        # 13 ファイル
+ls $W/out/                                        # 23 ファイル
 ```
 
-3 つとも `COMPLETED` になり、`out/` に BAM・markdup metrics・5 つの gVCF
+3 つとも `COMPLETED` になり、`out/` に BAM・markdup metrics・5 つの gVCF と 5 つの VCF
 （+ インデックス）が揃えば成功です。
 
 ---
@@ -401,6 +401,7 @@ srun --jobid=<ジョブID（配列なら JobIDRaw）> --overlap -n1 top -bn1 | h
 NA18945.bam (+.bai)                     重複マーク済み BAM（GRCh38 座標）
 NA18945.markdup.metrics
 NA18945.{autosome,PAR,chrX_female,chrX_male,chrY}.g.vcf.gz (+.tbi)
+NA18945.{autosome,PAR,chrX_female,chrX_male,chrY}.vcf.gz (+.tbi)     同じ 5 区間の VCF（変異の位置だけ）
 NA18945.sv.vcf.gz, .sv.chrX_female/.sv.chrX_male/.sv.chrY.vcf.gz (+.tbi)   call_sv=true のとき
 NA18945.sv*.nonrep.vcf.gz (+.tbi)       sv_exclude_bed を渡したとき（反復配列の外の単純な DEL/INS）
 ```
@@ -468,7 +469,7 @@ scripts/submit-slurm.sh \
 ```
 
 成功の基準は、prepare・lane・markdup・sv・call・cleanup の 6 つが `COMPLETED` になり、`out/` に
-13 ファイルがそろうことです。
+23 ファイルがそろうことです。
 
 `--variant parabricks` では段階 3 が 3 つのジョブに分かれ、GPU ノードを使うのは
 DeepVariant の間だけです。DeepVariant は BAM ができた時点で始まり、SV を待ちません。

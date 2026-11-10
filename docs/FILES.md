@@ -19,6 +19,7 @@ write the same files.
 | `<prefix>.chrX_female.g.vcf.gz` (+ `.tbi`) | 165 MB | chrX outside PAR, diploid |
 | `<prefix>.chrX_male.g.vcf.gz` (+ `.tbi`) | 165 MB | chrX outside PAR, haploid |
 | `<prefix>.chrY.g.vcf.gz` (+ `.tbi`) | 29 MB | chrY outside PAR, haploid |
+| `<prefix>.{autosome,PAR,chrX_female,chrX_male,chrY}.vcf.gz` (+ `.tbi`) | a fraction of the gVCFs | DeepVariant's plain VCFs of the same five calls: variant sites only, no reference blocks, PASS and RefCall records as DeepVariant writes them |
 | `<prefix>.sv.vcf.gz` (+ `.tbi`) | 11 MB | Graph SVs (≥ `sv_min_length`, default 50 bp) genotyped by `vg call` on the autosomes and PAR, diploid. Written when `call_sv: true` |
 | `<prefix>.sv.chrX_female.vcf.gz` (+ `.tbi`) | 1 MB | Graph SVs on chrX outside PAR, diploid |
 | `<prefix>.sv.chrX_male.vcf.gz` (+ `.tbi`) | 1 MB | Graph SVs on chrX outside PAR, haploid |

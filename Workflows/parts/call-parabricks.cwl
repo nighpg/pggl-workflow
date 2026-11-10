@@ -214,6 +214,11 @@ steps:
       - gvcf_chrX_female
       - gvcf_chrX_male
       - gvcf_chrY
+      - vcf_autosome
+      - vcf_PAR
+      - vcf_chrX_female
+      - vcf_chrX_male
+      - vcf_chrY
 
 outputs:
   sv_nonrep_vcf:
@@ -320,5 +325,40 @@ outputs:
     type: File
     doc: Haploid gVCF for chrY
     outputSource: deepvariant/gvcf_chrY
+    secondaryFiles:
+      - .tbi
+
+  vcf_autosome:
+    type: File
+    doc: Diploid VCF for autosome regions (reference coordinates), the variant sites of the gVCF
+    outputSource: deepvariant/vcf_autosome
+    secondaryFiles:
+      - .tbi
+
+  vcf_PAR:
+    type: File
+    doc: Diploid VCF for PAR regions
+    outputSource: deepvariant/vcf_PAR
+    secondaryFiles:
+      - .tbi
+
+  vcf_chrX_female:
+    type: File
+    doc: Diploid VCF for female chrX
+    outputSource: deepvariant/vcf_chrX_female
+    secondaryFiles:
+      - .tbi
+
+  vcf_chrX_male:
+    type: File
+    doc: Haploid VCF for male chrX
+    outputSource: deepvariant/vcf_chrX_male
+    secondaryFiles:
+      - .tbi
+
+  vcf_chrY:
+    type: File
+    doc: Haploid VCF for chrY
+    outputSource: deepvariant/vcf_chrY
     secondaryFiles:
       - .tbi

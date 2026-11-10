@@ -76,6 +76,7 @@ steps:
         valueFrom: $(self + ".autosome")
     out:
       - gvcf
+      - vcf
 
   deepvariant_PAR:
     run: ../../Tools/parabricks-deepvariant.cwl
@@ -90,6 +91,7 @@ steps:
         valueFrom: $(self + ".PAR")
     out:
       - gvcf
+      - vcf
 
   deepvariant_chrX_female:
     run: ../../Tools/parabricks-deepvariant.cwl
@@ -104,6 +106,7 @@ steps:
         valueFrom: $(self + ".chrX_female")
     out:
       - gvcf
+      - vcf
 
   deepvariant_chrX_male:
     run: ../../Tools/parabricks-deepvariant.cwl
@@ -120,6 +123,7 @@ steps:
         valueFrom: $(self + ".chrX_male")
     out:
       - gvcf
+      - vcf
 
   deepvariant_chrY:
     run: ../../Tools/parabricks-deepvariant.cwl
@@ -136,6 +140,7 @@ steps:
         valueFrom: $(self + ".chrY")
     out:
       - gvcf
+      - vcf
 
 outputs:
   gvcf_autosome:
@@ -170,5 +175,40 @@ outputs:
     type: File
     doc: Haploid gVCF for chrY
     outputSource: deepvariant_chrY/gvcf
+    secondaryFiles:
+      - .tbi
+
+  vcf_autosome:
+    type: File
+    doc: Diploid VCF for autosome regions (reference coordinates), the variant sites of the gVCF
+    outputSource: deepvariant_autosome/vcf
+    secondaryFiles:
+      - .tbi
+
+  vcf_PAR:
+    type: File
+    doc: Diploid VCF for PAR regions
+    outputSource: deepvariant_PAR/vcf
+    secondaryFiles:
+      - .tbi
+
+  vcf_chrX_female:
+    type: File
+    doc: Diploid VCF for female chrX
+    outputSource: deepvariant_chrX_female/vcf
+    secondaryFiles:
+      - .tbi
+
+  vcf_chrX_male:
+    type: File
+    doc: Haploid VCF for male chrX
+    outputSource: deepvariant_chrX_male/vcf
+    secondaryFiles:
+      - .tbi
+
+  vcf_chrY:
+    type: File
+    doc: Haploid VCF for chrY
+    outputSource: deepvariant_chrY/vcf
     secondaryFiles:
       - .tbi

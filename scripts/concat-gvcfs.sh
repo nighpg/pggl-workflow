@@ -13,7 +13,13 @@ set -euo pipefail
 
 PREFIX=$1
 shift
-OUT="${PREFIX}.autosome.g.vcf.gz"
+# --suffix vcf.gz joins the plain VCFs instead (default: g.vcf.gz)
+SUFFIX=g.vcf.gz
+if [ "${1:-}" = --suffix ]; then
+    SUFFIX=$2
+    shift 2
+fi
+OUT="${PREFIX}.autosome.${SUFFIX}"
 
 if [ "$#" -lt 1 ]; then
     echo "concat-gvcfs.sh: no input gVCFs" >&2
