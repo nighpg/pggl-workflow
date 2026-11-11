@@ -8,17 +8,17 @@ README と `docs/TUTORIAL.ja.md`、`docs/OFFLINE.md` にあります。
 
 | 項目 | 内容 |
 | --- | --- |
-| apptainer | `/opt/pkg/apptainer/1.4.5/bin/apptainer`（`PATH` になくても `scripts/submit-slurm.sh` が見つけます） |
-| 共有データ | `/usr/local/shared_data`。オンライン側では `/lustre9/open/shared_data` としても見えますが、オフラインの GPU クラスタには `/usr/local/shared_data` しかないので、パスはこの形で書きます |
+| apptainer | システムに導入済み（`PATH` になくても `scripts/submit-slurm.sh` が見つけます） |
+| 共有データ | オンライン側とオフラインの GPU クラスタの両方から見える共有ストレージ。以下では `<共有データ>` と書きます。オンライン側では別のパスでも見えますが、オフラインの GPU クラスタと同じパスで書きます。実際のパスは管理者に確認してください |
 | パーティション | オンライン側の計算ノードは `test`（`/tmp` はノードあたり約 643 GB） |
 
-`/usr/local/shared_data` は計算ノードからも見えます。
-`submit-slurm.sh` はこの下の入力に対して `/usr/local/shared_data` をコンテナに bind します。
+`<共有データ>` は計算ノードからも見えます。
+`submit-slurm.sh` はこの下の入力に対して `<共有データ>` をコンテナに bind します。
 
 ## 共有データの配置
 
 ```
-/usr/local/shared_data/visc/data/          <- データルート（PGGL_DATA）
+<共有データ>/<データルート>/               <- データルート（PGGL_DATA）
 ├── JaSaPaGe_GRCh38/release/               グラフ、giraffe インデックス、clip グラフと .hapl、参照 FASTA
 ├── combined_GRCh38/release/               738 ハプロタイプの combined グラフ（同じ構成）
 └── pggl-workflow/
@@ -30,14 +30,15 @@ README と `docs/TUTORIAL.ja.md`、`docs/OFFLINE.md` にあります。
     └── SHA256SUMS
 ```
 
-`visc/data` に書き込めるのは管理用のアカウントだけです。clone の更新（`git pull`）も、
+データルートに書き込めるのは管理用のアカウントだけです。clone の更新（`git pull`）も、
 そのアカウントで行います（所有者が違うと git が止めます）。
 
 プリセットは繰り返し配列の BED を clone の `interval_files/` で探すので、clone を
 作り直したときは一度だけコピーします。
 
 ```bash
-R=/usr/local/shared_data/visc/data/pggl-workflow
+export PGGL_DATA=/path/to/data-root            # <共有データ>/<データルート>
+R=$PGGL_DATA/pggl-workflow
 cp $R/interval_files/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz $R/repo/pggl-workflow/interval_files/
 ```
 
@@ -47,8 +48,8 @@ cp $R/interval_files/GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz $R/repo
 そのクラスタから書き込める場所にします。
 
 ```bash
-R=/usr/local/shared_data/visc/data/pggl-workflow
-export PGGL_DATA=/usr/local/shared_data/visc/data
+export PGGL_DATA=/path/to/data-root            # <共有データ>/<データルート>
+R=$PGGL_DATA/pggl-workflow
 cd $R/repo/pggl-workflow
 W=/path/to/work                                  # 自分の作業ディレクトリ（clone の中には書けません）
 cp examples/jobs/sample.cram.json $W/sample.json # または sample.fastq.json。リードのパスと prefix を書き換える
@@ -82,7 +83,7 @@ scripts/run-cram-personalized.sh --cram /path/to/SAMPLE.cram --cram-ref /path/to
 ```
 
 `--dry-run` をつけると、ジョブを投入せずに `<workdir>/env.sh`（`run-cram-personalized.sh`
-では `<workdir>/prep/env.sh`）と各段階のスクリプトを書き出します。`env.sh` の `--bind` に `/usr/local/shared_data` が入っていれば、
+では `<workdir>/prep/env.sh`）と各段階のスクリプトを書き出します。`env.sh` の `--bind` に `<共有データ>` が入っていれば、
 パスと bind は問題ありません。
 
 ## オフラインの GPU クラスタ
