@@ -30,6 +30,10 @@
 #   --data-root DIR      where the graph releases are (default: $PGGL_DATA)
 #   --partition P        Slurm partition for the CPU jobs
 #
+# Before anything is submitted the preset's files are checked (also on their own:
+# scripts/check-inputs.py PRESET --data-root DIR); the repeat BED comes from
+# scripts/fetch-giab-repeat-bed.sh.
+#
 # Options:
 #   --preset FILE        graph preset (default examples/graphs/combined.json)
 #   --variant V          parabricks (default), cpu or gpu: the DeepVariant used
@@ -182,6 +186,9 @@ if [ "$VARIANT" != cpu ]; then
     [ -n "$GPU_PARTITION" ] || die "--variant $VARIANT needs --gpu-partition"
 fi
 for f in "$SIF" "$CALL_SIF" "$PRESET"; do [ -s "$f" ] || die "$f not found"; done
+# fail now, not hours later inside a job, when a graph file or the repeat BED is missing
+python3 "$REPO/scripts/check-inputs.py" --data-root "$DATA_ROOT" "$PRESET" >&2 \
+    || die "the preset's input files are missing (see above)"
 if [ -z "$APPTAINER" ]; then
     APPTAINER=$(command -v apptainer || command -v singularity \
         || ls -d /opt/pkg/apptainer/*/bin/apptainer 2>/dev/null | sort -V | tail -1 || true)
@@ -271,7 +278,7 @@ PY
 )
 rm -rf "\$W/tmp/sample" "\$W/tmp-out/sample"
 mkdir -p "\$W/pgraph" "\$W/tmp/sample" "\$W/tmp-out/sample"
-"$APPTAINER" exec --cleanenv \$BINDS --bind /tmp "$SIF" \\
+"$APPTAINER" exec --cleanenv --env PYTHONNOUSERSITE=1 \$BINDS --bind /tmp "$SIF" \\
     cwltool --no-container --timestamps --outdir "\$W/pgraph" \\
         --tmpdir-prefix "\$W/tmp/sample/" --tmp-outdir-prefix "\$W/tmp-out/sample/" \\
         "$REPO/Workflows/haplotype-sample.cwl" "\$W/hs.json" > "\$W/pgraph/out.json"

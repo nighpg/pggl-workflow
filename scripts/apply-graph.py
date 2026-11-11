@@ -47,7 +47,9 @@ def resolve(preset, data_root):
                 if found is None and not data_root:
                     sys.exit(f"apply-graph.py: {v['path']} is relative to the graph data; "
                              "give --data-root DIR or set PGGL_DATA")
-                return dict(v, path=os.path.abspath(found or cands[0]))
+                # the repeat BED lives in the checkout, so that is where to report it missing
+                fallback = cands[-1] if v["path"].startswith("interval_files/") else cands[0]
+                return dict(v, path=os.path.abspath(found or fallback))
             return {k: fix(x) for k, x in v.items()}
         return v
     return fix(preset)

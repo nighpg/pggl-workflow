@@ -248,6 +248,35 @@ clipped is centromeric/satellite sequence. Per contig the lowest non-N coverage
 is chr21 89.8%, chrY 91.2%, chr18 93.2%, chr9 94.2%. The CHM13v2 backbone is
 complete, so this is the price of staying in GRCh38 coordinates.
 
+## First-time setup
+
+Two things are not in the repository and must be in place before a run that uses
+a graph preset (`run-cram-personalized.sh`, `apply-graph.py`):
+
+1. **The graph releases** (`JaSaPaGe_GRCh38/`, `combined_GRCh38/`), installed in one
+   directory, the *data root*. Give it with `--data-root DIR` or `export PGGL_DATA=DIR`.
+2. **The repeat BED** (GIAB `GRCh38_AllTandemRepeatsandHomopolymers_slop5.bed.gz`,
+   30 MB), which the presets use as `sv_exclude_bed`. Download it once, on a host
+   with network access:
+
+   ```bash
+   scripts/fetch-giab-repeat-bed.sh            # -> interval_files/ of this checkout
+   ```
+
+   On an offline host, copy the file into the checkout's `interval_files/`
+   (`--out DIR` writes it elsewhere; `apply-graph.py` finds it there only if
+   `DIR` is `$PGGL_DATA/interval_files`).
+
+Check the whole set for a preset, before submitting anything:
+
+```bash
+scripts/check-inputs.py examples/graphs/combined.json --data-root "$PGGL_DATA"
+```
+
+It lists each file as `OK` or `MISSING` and exits 1 if any is missing.
+`run-cram-personalized.sh` runs the same check first and stops there, so a missing
+file does not surface hours later inside a Slurm job.
+
 ## Choosing a graph
 
 A graph is a set of inputs that must belong together: the giraffe indexes, the
@@ -258,7 +287,8 @@ choosing a graph is choosing a preset (`sample.json` below is a copy of a
 template from `examples/jobs/`). A preset's paths are relative to where
 the releases are installed (`<data root>/JaSaPaGe_GRCh38/release/...`), given
 with `--data-root` or `$PGGL_DATA`; the repeat BED is found in the checkout's
-`interval_files/` once `scripts/fetch-giab-repeat-bed.sh` has fetched it.
+`interval_files/` once `scripts/fetch-giab-repeat-bed.sh` has fetched it (see
+*First-time setup*).
 
 ```bash
 export PGGL_DATA=/path/to/graphs       # holds JaSaPaGe_GRCh38/ and combined_GRCh38/
