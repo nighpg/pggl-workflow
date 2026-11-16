@@ -69,6 +69,14 @@
 #   --markdup-sbatch S   sbatch options for job 3a (parabricks only); it runs in
 #                        --partition (default: as --call-sbatch's default)
 #   --sv-sbatch S        the same for job 3b
+#   --markdup-threads N  cores of job 3a: the same N is its --cpus-per-task and the
+#                        threads of its tools (parabricks only; the job's own `threads`
+#                        otherwise, which the three jobs of stage 3 share)
+#   --markdup-mem G      memory of job 3a in GB. With both options the job shares
+#                        its node; with one it still takes the whole node
+#   --sv-threads N, --sv-mem G   the same for job 3b
+#                        (not with --markdup-sbatch / --sv-sbatch, which replace the
+#                        sbatch options but leave the tools' threads alone)
 #   --max-lanes N        run at most N lane tasks at once (array %N)
 #   --local-index DIR    node-local directory the lane tasks copy the graph and
 #                        giraffe indexes into before mapping (default /tmp;
@@ -93,6 +101,9 @@
 #   --from markdup       parabricks only: resubmit job 3a and the 3c that reads
 #                        its BAM, keeping 3b's SVs (when only 3a failed)
 #   --from sv            parabricks only: resubmit just job 3b (when only it failed)
+#   --after-job ID       with --from: the resubmitted jobs wait for job ID (afterok);
+#                        used to run two resubmissions one after the other, since
+#                        each ends with a cleanup job that clears the scratch
 #   --keep-intermediates keep every intermediate file. By default each one is
 #                        removed once the jobs that read it have succeeded: the
 #                        FASTQs decoded from a CRAM/BAM when stage 3 starts, the
@@ -130,6 +141,8 @@ LANE_SBATCH=
 CALL_SBATCH=
 MARKDUP_SBATCH=
 SV_SBATCH=
+MARKDUP_THREADS= MARKDUP_MEM= SV_THREADS= SV_MEM=
+AFTER_JOB=
 MAX_LANES=
 LOCAL_INDEX=/tmp
 LANE_THREADS=32
@@ -159,6 +172,10 @@ while [ "$#" -gt 0 ]; do
         --call-sbatch) CALL_SBATCH=$2; shift 2 ;;
         --markdup-sbatch) MARKDUP_SBATCH=$2; shift 2 ;;
         --sv-sbatch) SV_SBATCH=$2; shift 2 ;;
+        --markdup-threads) MARKDUP_THREADS=$2; shift 2 ;;
+        --markdup-mem) MARKDUP_MEM=$2; shift 2 ;;
+        --sv-threads) SV_THREADS=$2; shift 2 ;;
+        --sv-mem) SV_MEM=$2; shift 2 ;;
         --max-lanes) MAX_LANES=$2; shift 2 ;;
         --local-index) LOCAL_INDEX=$2; shift 2 ;;
         --lane-threads) LANE_THREADS=$2; shift 2 ;;
@@ -168,6 +185,7 @@ while [ "$#" -gt 0 ]; do
         --no-local-index) LOCAL_INDEX=; shift ;;
         --no-call-parallel) CALL_PARALLEL=0; shift ;;
         --from) FROM=$2; shift 2 ;;
+        --after-job) AFTER_JOB=$2; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
         --keep-intermediates) CLEANUP=0; shift ;;
         --remove-after-lanes) REMOVE_AFTER_LANES+=( "$(readlink -m "$2")" ); shift 2 ;;
@@ -213,6 +231,28 @@ else
     : "${LANE_SBATCH:=--exclusive --mem=0 --cpus-per-task=$THREADS}"
 fi
 : "${CALL_SBATCH:=--exclusive --mem=0 --cpus-per-task=$THREADS}"
+# --markdup-threads/-mem (--sv-...): the job's cores and its tools' threads are set
+# together, so the tools never run more threads than the job has cores
+case "$MARKDUP_THREADS$MARKDUP_MEM$SV_THREADS$SV_MEM" in *[!0-9]*) die "--markdup-*/--sv-* take whole numbers" ;; esac
+if [ -n "$MARKDUP_THREADS$MARKDUP_MEM$SV_THREADS$SV_MEM" ] && [ "$VARIANT" != parabricks ]; then
+    die "--markdup-*/--sv-* need --variant parabricks (the other variants have no separate markdup and sv jobs)"
+fi
+part_sbatch() {  # THREADS MEM -> sbatch options of a part job
+    if [ -n "$1" ] && [ -n "$2" ]; then echo "--cpus-per-task=$1 --mem=${2}G"
+    elif [ -n "$1" ]; then echo "--exclusive --mem=0 --cpus-per-task=$1"
+    else echo "--exclusive --mem=${2}G --cpus-per-task=$THREADS"; fi
+}
+MARKDUP_SET="" SV_SET=""
+if [ -n "$MARKDUP_THREADS$MARKDUP_MEM" ]; then
+    [ -z "$MARKDUP_SBATCH" ] || die "--markdup-threads/--markdup-mem cannot be combined with --markdup-sbatch"
+    MARKDUP_SBATCH=$(part_sbatch "$MARKDUP_THREADS" "$MARKDUP_MEM")
+    [ -z "$MARKDUP_THREADS" ] || MARKDUP_SET=" --set threads=$MARKDUP_THREADS"
+fi
+if [ -n "$SV_THREADS$SV_MEM" ]; then
+    [ -z "$SV_SBATCH" ] || die "--sv-threads/--sv-mem cannot be combined with --sv-sbatch"
+    SV_SBATCH=$(part_sbatch "$SV_THREADS" "$SV_MEM")
+    [ -z "$SV_THREADS" ] || SV_SET=" --set threads=$SV_THREADS"
+fi
 : "${MARKDUP_SBATCH:=--exclusive --mem=0 --cpus-per-task=$THREADS}"
 : "${SV_SBATCH:=--exclusive --mem=0 --cpus-per-task=$THREADS}"
 SPLIT=0
@@ -314,6 +354,8 @@ LANE_SBATCH="$LANE_SBATCH"
 CALL_SBATCH="$CALL_SBATCH"
 MARKDUP_SBATCH="$MARKDUP_SBATCH"
 SV_SBATCH="$SV_SBATCH"
+MARKDUP_SET="$MARKDUP_SET"
+SV_SET="$SV_SET"
 SPLIT=$SPLIT
 JOBNAME=pggl-$PREFIX
 CALL_CWLTOOL_OPTS="$([ "$CALL_PARALLEL" = 1 ] && echo --parallel)"
@@ -475,14 +517,14 @@ cat > "$W/3-markdup.sh" <<'EOF'
 #!/usr/bin/env bash
 source "__W__/env.sh"
 cleanup_after_lanes
-python3 "$HELPER" call "$W/job.json" "$W/prepare.out.json" "$W/lanes" "$PARTS/call-markdup.cwl" "$W/markdup.job.json"
+python3 "$HELPER" call "$W/job.json" "$W/prepare.out.json" "$W/lanes" "$PARTS/call-markdup.cwl" "$W/markdup.job.json" $MARKDUP_SET
 run_part markdup "$PARTS/call-markdup.cwl" "$W/markdup.job.json" "$W/out-markdup.json" --outdir "$W/out" $CALL_CWLTOOL_OPTS
 cleanup_lane_files .bam
 EOF
 cat > "$W/3-sv.sh" <<'EOF'
 #!/usr/bin/env bash
 source "__W__/env.sh"
-python3 "$HELPER" call "$W/job.json" "$W/prepare.out.json" "$W/lanes" "$PARTS/call-sv.cwl" "$W/sv.job.json"
+python3 "$HELPER" call "$W/job.json" "$W/prepare.out.json" "$W/lanes" "$PARTS/call-sv.cwl" "$W/sv.job.json" $SV_SET
 run_part sv "$PARTS/call-sv.cwl" "$W/sv.job.json" "$W/out-sv.json" --outdir "$W/out" $CALL_CWLTOOL_OPTS
 cleanup_lane_files .gam
 EOF
@@ -564,7 +606,7 @@ sys.exit(any(isinstance(o.get(k), dict) and not os.path.exists(o[k]["path"]) for
                 rm -rf "$W/out-sv.json" "$W/tmp/sv" "$W/tmp-out/sv"
                 rm -f "$W/out/"*.sv*.vcf.gz "$W/out/"*.sv*.vcf.gz.tbi "$W/out/"*.pack ;;
         esac
-        bash "$W/submit-call.sh" "" "$FROM"
+        bash "$W/submit-call.sh" "$AFTER_JOB" "$FROM"
         echo "over the $(ls -d "$W"/lanes/*/ | wc -l) lanes in $W"
         exit 0
         ;;
