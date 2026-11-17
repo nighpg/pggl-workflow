@@ -15,7 +15,7 @@
 └─────────────────────────┘           └──────────────────────────────────────────┘
 ```
 
-ワークフローそのものは実行時にネットワークを使いません。ネットワークが必要なのは、
+ワークフローそのものは実行時にインターネット接続を必要としません。インターネット接続が必要なのは、
 apptainer イメージとその材料を集める手順 1〜3 だけです。
 
 ---
@@ -63,7 +63,7 @@ cd pggl-workflow
 git status            # 何も表示されない（クリーン）ことを確認
 ```
 
-**必ずコミット済みの状態にしてください。** バンドルに入るソースは `git archive HEAD`
+ファイルを編集した場合は**必ずコミット済みの状態にしてください。** バンドルに入るソースは `git archive HEAD`
 で作られるので、コミットしていない変更はエアギャップ側に届きません。
 
 apptainer をコマンド名 `apptainer` で呼べるようにしておきます。`singularity`
@@ -156,7 +156,7 @@ cd /shared/…/refbundle && sha256sum -c SHA256SUMS
 
 ## 5. エアギャップ側: 参照データを配置する
 
-以下では、次のように置いたとして説明します。
+次のようなファイル配置であることを前提に説明します。
 
 ```
 /shared/…/ref/JaSaPaGe/   JaSaPaGe.gbz  JaSaPaGe.snarls  jasapage.dist
@@ -571,6 +571,146 @@ scripts/run-cram-personalized.sh \
   `submit-slurm.sh` の部分は、最初の実行で `<workdir>/3-submit.sh` に書かれたコマンドです。
   2 つ投入し直す必要があるときは、1 つが終わってから次を投入します。
 - `--dry-run` をつけると、投入せずにジョブとスクリプトだけを書き出します。
+- 段階 2（sample）は既定で 1 ノードを占有します（`--exclusive`、メモリはノード全体）。メモリ約
+  300 GB が上限なので、`--sample-threads 50 --sample-mem 500` のように**コア数とメモリを
+  両方**指定すると占有せず、残りのコアとメモリで他のジョブ（別の検体の prepare やレーン）が
+  同じノードで動けます（コアが少ない分、sample は長くなります）。`--sample-threads` の値は
+  ジョブの `--cpus-per-task` と、各ツール（kmc、vg autoindex など）のスレッド数の両方に
+  同じ値で渡ります。片方だけを指定したときは、これまでどおりノードを占有します。
+  メモリが足りたかは、`run-cohort.sh --report` の「peak mem」と「allocated」で確認できます。
+- レーン（段階 3 のマッピング）の資源は、`--lane-threads`（コア数とスレッド数、既定 32）、
+  `--lane-mem-per-chunk`（メモリ、GB、既定 100）、`--lane-align-chunks`（1 レーンあたりの
+  vg giraffe の数、既定 1）で変えます。レーン 1 つのメモリは「チャンク数 × `--lane-mem-per-chunk`」です。
+  1 チャンクは約 80 GB のインデックスを持つので、100 GB では余裕が約 20 GB です。
+- ほかのジョブのコアとメモリも、ジョブごとに指定できます。**コア数はそのジョブの
+  `--cpus-per-task` と各ツールのスレッド数に同じ値で渡ります**（`--threads` と
+  `--call-mem` の組は、call ジョブです）。
+
+  | ジョブ | コア数 | メモリ（GB） | 既定 |
+  | --- | --- | --- | --- |
+  | prepare（段階 1） | `--prepare-threads` | `--prepare-mem` | 32 コア、64 GB |
+  | run-prepare（段階 3 の最初のジョブ） | `--run-prepare-threads` | `--run-prepare-mem` | 32 コア、64 GB |
+  | sample（段階 2） | `--sample-threads` | `--sample-mem` | ノード全体 |
+  | lane | `--lane-threads` | `--lane-mem-per-chunk` | 32 コア、100 GB |
+  | markdup | `--markdup-threads` | `--markdup-mem` | ノード全体 |
+  | sv | `--sv-threads` | `--sv-mem` | ノード全体 |
+  | call（GPU） | `--threads` | `--call-mem` | ノード全体 |
+
+  run-prepare は、FASTQ のレーンでは、レーンを列挙して後続のジョブ（lane、markdup、sv、call、
+  cleanup）を投入するだけなので、小さくできます（2 コア・8 GB など）。コア数とメモリは
+  両方を指定します。
+
+  sample、markdup、sv は、コア数とメモリの**両方**を指定したときだけノードを占有しません
+  （片方だけなら、これまでどおり占有します）。call は `--call-mem` を指定すると占有しません。
+  markdup と sv は `--variant parabricks` のときだけ別のジョブです。
+- ノードのコア数とメモリから、ジョブごとの割り振りを提案できます。
+  ジョブごとに「コア数・メモリの範囲」を決めてあり、ノードをジョブの種類ごとに割って、
+  範囲に収めます。範囲は暫定の値で（実測がある lane と sample 以外は推測）、`--report` の
+  ピークメモリと CPU 効率を見て直してください（`scripts/suggest-resources.py` の先頭）。
+
+  ```bash
+  scripts/run-cohort.sh --suggest --node-cpus 128 --node-mem 1000 --gpu-node-gpus 4 --gpus 4
+  ```
+
+  表と、`--` の後ろに渡すオプションが出ます。`--pack many` にすると、1 ノードにできるだけ
+  多くのジョブを入れる割り振りになります（既定の `large` は、範囲の上限に近い大きさです）。
+  ジョブの種類をまたいだ調整はしません（sample と lane が同じノードを取り合うことがあります）。
+- 多数の検体は `scripts/run-cohort.sh` で、同時に流す数を絞って投入できます。検体リスト
+  （タブ区切りで 検体名・CRAM・参照 FASTA）を `-k` 本の鎖に振り分け、鎖の中では前の検体の
+  sample が終わってから次の検体の prepare を始めます（前の検体のマッピングと call の間に、
+  次の検体の prepare と sample が進みます）。`run-cram-personalized.sh` のオプションは
+  `--` の後ろに書きます。既定では、ある検体の sample が失敗しても鎖は続きます
+  （`--on-fail stop` で止まります）。作業ディレクトリに `jobs.tsv` がある検体は投入済みとして
+  飛ばすので、失敗した検体を直した後に同じリストをもう一度渡せます。
+
+  ```bash
+  scripts/run-cohort.sh --list samples.tsv --workdir-root /shared/…/runs -k 2 --dry-run -- \
+      --data-root /shared/…/graphs --partition CPU --variant parabricks --gpu-partition GPU
+  ```
+
+  `--dry-run` は各検体のコマンドを表示するだけです。
+
+  **途中で止まったコホートの再開**は、同じリストと同じオプションに `--resume` を足して実行します。
+  完了していない検体のうち、ジョブが動いていない（待ちを含む）ものを、止まった場所から
+  投入し直します。止まった場所は、prepare、sample、マッピング、call、markdup、sv、
+  DeepVariant（dv）のどれでも構いません。まだ一度も投入していない検体は、新しい検体として
+  投入します。完了した検体と、ジョブが動いている検体は何もしません。
+
+  ```bash
+  scripts/run-cohort.sh --resume --dry-run --list samples.tsv --workdir-root /shared/…/runs -k 2 -- (最初と同じオプション)
+  scripts/run-cohort.sh --resume           --list samples.tsv --workdir-root /shared/…/runs -k 2 -- (最初と同じオプション)
+  ```
+
+  - 失敗したジョブを待って PENDING のまま残っているジョブ（`afterok`）は、再開の前に
+    `scancel` します。
+  - sample の再投入は `-k` の鎖に従います。call 以降の再投入は鎖を使わず、すぐに投入します。
+  - markdup（または DeepVariant）と sv の両方を直すときは、先に markdup と call（または
+    DeepVariant）を投入し、sv はその cleanup ジョブの完了を待つ形（`afterok`）で続けて
+    投入します。各再投入は最後に作業用ファイルを消す cleanup を持つので、並べて走らせると
+    後の分のファイルが消えるためです。`--resume` は 1 回で済みます。
+  - CRAM から戻した FASTQ がすでに消えている検体（段階 2 まで成功していて、マッピングの途中で
+    失敗した検体）は、再開できません。作業ディレクトリを消して、最初からやり直してください。
+  - 再開では、そのときに指定したオプション（メモリなど）で投入し直します。メモリ不足で
+    止まったなら、`--lane-mem-per-chunk` などを増やして `--resume` を実行できます。
+  - `--resume` なしで同じリストを渡すと、投入済みの検体は飛ばします。
+
+  投入した後の進み具合は、`--status` で表にして確認できます。各検体の作業ディレクトリの
+  `jobs.tsv` から全ジョブの ID を集め、`sacct` を 1 回だけ呼びます（`--list` を省くと、
+  `jobs.tsv` のあるディレクトリを投入順に並べます）。`watch -n 60` と組み合わせると、
+  進行を見続けられます。
+
+  ```bash
+  scripts/run-cohort.sh --status --workdir-root /shared/…/runs --list samples.tsv
+  ```
+
+  ```
+  #  sample  state          now             prepare  sample  submit  lane     markdup  sv    call  cleanup  wall   wait   cpu-h
+  1  A       DONE                           OK       OK      OK      OK 3/3   OK       OK    OK    OK       3h40m  0h05m  399.0
+  2  B       RUNNING        lane            OK       OK      OK      RUN 2/4  -        -     -     -        2h40m  0h00m  273.0
+  3  C       PENDING        sample, submit  OK       PEND    PEND    -        -        -     -     -        0h30m  0h30m  8.0
+  4  D       FAILED         prepare         FAIL     blocked blocked blocked  blocked  ...
+  5  E       not submitted                  -        -       -       -        -        -     -     -        -      -      -
+
+  done: #1 | in progress: #2 lane (RUNNING), #3 sample, submit (PENDING) | failed: #4 prepare | not submitted: #5
+  ```
+
+  `wall` は、その検体の最初に動き出したジョブの開始（`Start`）から、最後のジョブの終了までの
+  時間です（終わっていなければ現在まで）。他の検体を待っていた時間は含みません。`wait` は
+  その `wall` のうち、どのジョブも動いていなかった時間です。lane が終わったのに markdup や
+  sv が PEND のままのような、キューでの待ちがここに出ます。まだ 1 つも動き出していない検体は
+  `-` です。
+
+  検体の状態は、DONE、RUNNING、PENDING、FAILED、CANCELLED、STALLED、not submitted のどれかです。
+  run-prepare が失敗していても、call を含む run-prepare 以外の投入済み段階がすべて成功していれば
+  DONE とします。
+  表の `now` 欄には run-prepare のジョブ ID と「outputs complete」を表示します。後続のいずれかが
+  失敗・未完了の場合は、従来どおり FAILED などとして表示します。
+  `scancel`（`--cancel` を含む）で止めたジョブは、失敗（FAILED）ではなく CANCELLED と表示し、
+  `--resume` で再投入します。`--resume` で投入し直した後は、新しいジョブの状態を表示し、
+  同じ段階の古い（取り消された）ジョブと、新しい投入で置き換えられた後続の古いジョブは
+  表に出しません（資源の集計には、古いジョブも含めます）。STALLED は、動いているジョブも
+  待っているジョブもなく、call が投入されていない状態です。
+
+  `--status` は、進捗の表のあとに、CPU 使用率（`cpu%`）と最大メモリの表も出します。段階ごとの
+  コホート全体の集計（タスク数、`cpu%`、最大メモリと割り当てメモリ、メモリ使用率、経過時間）と、
+  検体 × 段階の確保したコア数、`cpu%`、最大メモリ / 確保したメモリ（例: `32c 86% 145/150G`）です。
+  表は、各段階の**現在のジョブ**の値です。設定を書き直して `--resume` した後は、投入し直した
+  ジョブの割り当て（まだ始まっていないジョブは、要求した値）が表に出て、古い試行の値は
+  混ざりません。割り当ては、設定ファイルではなく Slurm の記録（`sacct` の `AllocTRES`、
+  始まる前は `ReqTRES`）から読むので、`--resume` で投入するまでは、古い値のままです。`cpu%` は、使った CPU 時間
+  （`TotalCPU`）を、割り当てた CPU 数 × 経過時間で割った値で、最大メモリは、そのジョブの
+  タスクの `MaxRSS` の最大です。割り当てたメモリに対して最大メモリが小さければ減らせ、
+  `cpu%` が低ければ、コア数を減らせるかの目安になります（`--suggest` の範囲の見直しにも使えます）。
+  どちらも `sacct` の記録なので、記録のないジョブは `-` です。
+
+  `--report cohort.html` は、同じ集計から 1 ページの HTML を書きます。外部ファイルも
+  スクリプトも使わないので、ログインノードで作って手元に持ち帰れます。検体ごとの進行表、
+  段階ごとの資源（経過時間、CPU 効率 = TotalCPU ÷ 割り当て CPU × 経過時間、ピークメモリ、
+  GPU 時間）、全ジョブのタイムライン、失敗したジョブとそのログの場所が入ります。
+  TotalCPU と MaxRSS は `sacct` の記録なので、クラスタのジョブアカウンティングが
+  これらを記録している必要があります。`--from` で投入し直した段階は、表には最新のジョブを
+  出し、資源の集計には古いジョブも含めます。prepare が失敗すると、後続の sample と submit は
+  `afterok` のまま PENDING に残るので、`blocked` と表示します。不要なら `scancel` してください。
 - 中間ファイルは段階ごとに消えます。k-mer の集計（`*.kff`、約 25 GB）は sample の直後、
   CRAM から戻した FASTQ は全レーンのマップ後、personalized グラフ（約 45 GB）は最後まで
   成功した後です。`--keep-graph` でグラフだけ、`--keep-intermediates` ですべてを残せます。
