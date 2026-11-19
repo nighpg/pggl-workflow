@@ -34,9 +34,11 @@ Subcommands:
                                                may be missing when stage 1 skipped);
                                                --set overrides an input of the lane
                                                jobs only (threads, align_chunks)
-  call       JOB PREPARE_OUT LANES_DIR PART OUT
+  call       JOB PREPARE_OUT LANES_DIR PART OUT [--set KEY=INT ...]
                                                stage-3 job from the lane outputs (with
-                                               parabricks, the markdup and sv jobs 3a/3b)
+                                               parabricks, the markdup and sv jobs 3a/3b);
+                                               --set overrides an input of this job only
+                                               (threads)
   dv         JOB MARKDUP_OUT PART OUT          the GPU job 3c of a split stage 3: the
                                                job's DeepVariant inputs and 3a's BAM
   stage-local JOB DIR OUT KEY...               copy the files of KEY... (e.g. the
@@ -143,6 +145,20 @@ def all_lanes(job, prep_out):
     return lanes
 
 
+def parse_sets(rest, part, cmd):
+    """--set KEY=INT ... -> {KEY: INT}, each KEY an input of PART."""
+    sets = {}
+    while rest:
+        if rest[0] != "--set" or len(rest) < 2 or "=" not in rest[1]:
+            sys.exit(f"slurm-jobs.py {cmd}: expected --set KEY=INT, got {rest[:2]}")
+        k, v = rest[1].split("=", 1)
+        if k not in part_inputs(part):
+            sys.exit(f"slurm-jobs.py {cmd}: {k} is not an input of {part}")
+        sets[k] = int(v)
+        rest = rest[2:]
+    return sets
+
+
 def main(argv):
     if len(argv) < 2:
         sys.exit(__doc__)
@@ -170,15 +186,7 @@ def main(argv):
         j = load_job(job)
         lanes = all_lanes(j, prep_out)
         common = subset(j, set(part_inputs(part)) - {"fq1", "fq2", "rg", "lane"})
-        rest = args[4:]
-        while rest:
-            if rest[0] != "--set" or len(rest) < 2 or "=" not in rest[1]:
-                sys.exit(f"slurm-jobs.py lanes: expected --set KEY=INT, got {rest[:2]}")
-            k, v = rest[1].split("=", 1)
-            if k not in part_inputs(part):
-                sys.exit(f"slurm-jobs.py lanes: {k} is not an input of {part}")
-            common[k] = int(v)
-            rest = rest[2:]
+        common.update(parse_sets(args[4:], part, "lanes"))
         for i, l in enumerate(lanes):
             lj = dict(common)
             lj.update(l)
@@ -186,7 +194,7 @@ def main(argv):
         print(len(lanes))
 
     elif cmd == "call":
-        job, prep_out, lanes_dir, part, out = args
+        job, prep_out, lanes_dir, part, out = args[:5]
         j = load_job(job)
         lanes = all_lanes(j, prep_out)
         outs = []
@@ -203,6 +211,7 @@ def main(argv):
                      pack_gams=[o.get("pack_gam") for o in outs])
         # the split parts (call-markdup, call-sv) take only some of these
         c.update({k: v for k, v in wired.items() if k in keys})
+        c.update(parse_sets(args[5:], part, "call"))
         dump(c, out)
 
     elif cmd == "dv":
